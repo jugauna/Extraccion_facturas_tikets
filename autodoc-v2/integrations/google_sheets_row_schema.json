@@ -1,0 +1,42 @@
+{
+  "description": "Filas para hoja 'Gastos' u homónimo. Primera fila = encabezados en este orden.",
+  "accounting_columns": [
+    "Clase",
+    "Comprobante",
+    "Fecha",
+    "F.Emision",
+    "Nombre",
+    "Cuit",
+    "Articulo",
+    "Detalle",
+    "Cuenta",
+    "Precio",
+    "IVA",
+    "Centro Costo",
+    "Tipo Comp.",
+    "Afecta Iva",
+    "Percep 1",
+    "Importe Percep 1",
+    "Percep 2",
+    "Importe Percep 2",
+    "Percep 3",
+    "Importe Percep 3",
+    "Iva Total",
+    "Cantidad"
+  ],
+  "hitl_and_automation_columns": [
+    "Compliance_Score",
+    "Compliance_Notes",
+    "HITL_Status",
+    "HITL_Decision_At",
+    "Execution_Id",
+    "Transcripcion_Voz",
+    "Drive_File_Id",
+    "Idempotency_Key"
+  ],
+  "notes": [
+    "Compliance_Score: 0-100 proveniente del chequeo RAG vs Manual de Ética (n8n).",
+    "HITL_Status: PENDING | APPROVED | REJECTED tras Wait / webhook de aprobación.",
+    "Un mismo comprobante con varias líneas contables puede generar múltiples filas; repetir metadatos HITL si se desea una fila por línea."
+  ]
+}

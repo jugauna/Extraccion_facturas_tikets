@@ -1,0 +1,126 @@
+<!--
+  Autodoc v2 — Módulo Código Divi (WordPress)
+  1) Reemplazá N8N_WEBHOOK_URL por la URL pública de tu Webhook n8n (Hostinger).
+  2) El formulario usa el nombre de campo "images" (repetido) para compatibilidad con FastAPI /process-batch y el flujo n8n.
+-->
+<div id="autodoc-rendiciones" class="autodoc-wrap">
+  <form id="autodoc_form" class="autodoc-form">
+    <label for="ticket_files">Seleccionar tickets (imágenes)</label>
+    <input type="file" id="ticket_files" name="ticket_files" multiple accept="image/*" required />
+
+    <label for="voice_note">Nota de voz (opcional, texto)</label>
+    <textarea id="voice_note" rows="2" placeholder="Transcripción manual o aclaración del lote"></textarea>
+
+    <button type="submit" id="autodoc_submit">Enviar a Rendiciones</button>
+  </form>
+
+  <div id="autodoc_status" class="autodoc-status" aria-live="polite"></div>
+  <div class="autodoc-progress-wrap" hidden>
+    <label for="autodoc_progress">Procesando con IA…</label>
+    <progress id="autodoc_progress" max="100" value="0"></progress>
+  </div>
+</div>
+
+<style>
+  .autodoc-wrap { max-width: 560px; margin: 1rem auto; font-family: system-ui, sans-serif; }
+  .autodoc-form label { display: block; margin-top: 0.75rem; font-weight: 600; }
+  .autodoc-form input[type="file"], .autodoc-form textarea { width: 100%; margin-top: 0.25rem; }
+  .autodoc-form button { margin-top: 1rem; padding: 0.6rem 1.2rem; cursor: pointer; }
+  .autodoc-status { min-height: 1.5rem; margin-top: 0.75rem; color: #333; }
+  .autodoc-status.error { color: #b91c1c; }
+  .autodoc-status.ok { color: #0f766e; }
+  .autodoc-progress-wrap { margin-top: 1rem; }
+  .autodoc-progress-wrap progress { width: 100%; height: 1rem; }
+  #autodoc_submit:disabled { opacity: 0.6; cursor: not-allowed; }
+</style>
+
+<script>
+(function () {
+  const N8N_WEBHOOK_URL = 'https://TU-DOMINIO-EN-HOSTINGER.TLD/webhook/autodoc-multi-ticket';
+
+  const form = document.getElementById('autodoc_form');
+  const input = document.getElementById('ticket_files');
+  const note = document.getElementById('voice_note');
+  const statusEl = document.getElementById('autodoc_status');
+  const btn = document.getElementById('autodoc_submit');
+  const progWrap = document.querySelector('.autodoc-progress-wrap');
+  const prog = document.getElementById('autodoc_progress');
+
+  function setStatus(msg, cls) {
+    statusEl.textContent = msg || '';
+    statusEl.className = 'autodoc-status' + (cls ? ' ' + cls : '');
+  }
+
+  function indeterminateProgress(on) {
+    progWrap.hidden = !on;
+    if (on) {
+      prog.removeAttribute('value');
+    } else {
+      prog.value = 0;
+    }
+  }
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    setStatus('', null);
+    const files = input.files ? Array.from(input.files) : [];
+    if (!files.length) {
+      setStatus('Seleccioná al menos una imagen.', 'error');
+      return;
+    }
+
+    const fd = new FormData();
+    files.forEach(function (f) {
+      fd.append('images', f, f.name);
+    });
+    const vt = (note && note.value) ? note.value.trim() : '';
+    if (vt) {
+      fd.append('voice_transcript', vt);
+    }
+    fd.append('batch_id', crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+
+    btn.disabled = true;
+    indeterminateProgress(true);
+
+    const ctrl = new AbortController();
+    const slowMsg = window.setTimeout(function () {
+      setStatus('Procesando varios tickets puede tardar más de 30 segundos…', null);
+    }, 8000);
+
+    try {
+      const res = await fetch(N8N_WEBHOOK_URL, {
+        method: 'POST',
+        body: fd,
+        signal: ctrl.signal,
+        credentials: 'omit',
+      });
+      clearTimeout(slowMsg);
+
+      const text = await res.text();
+      let body;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = { raw: text };
+      }
+
+      if (!res.ok) {
+        setStatus('Error ' + res.status + ': ' + (body.message || body.error || text.slice(0, 200)), 'error');
+        return;
+      }
+
+      setStatus('Lote enviado correctamente. Referencia: ' + (body.batch_id || body.batch_http?.batch_id || '—') + '. Revisá tu correo para la aprobación (HITL).', 'ok');
+    } catch (err) {
+      clearTimeout(slowMsg);
+      if (err.name === 'AbortError') {
+        setStatus('Solicitud cancelada.', 'error');
+      } else {
+        setStatus('Fallo de red o CORS: ' + err.message, 'error');
+      }
+    } finally {
+      btn.disabled = false;
+      indeterminateProgress(false);
+    }
+  });
+})();
+</script>

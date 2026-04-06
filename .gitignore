@@ -1,0 +1,28 @@
+# Variables de entorno (no subir secretos)
+.env
+.env.*
+!.env.example
+
+# Carpeta excluida por el usuario
+Documentos/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+ENV/
+
+# Credenciales locales sueltas
+*.pem
+credentials.json
+service-account*.json
+
+# OS / IDE
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/
+*.swp
