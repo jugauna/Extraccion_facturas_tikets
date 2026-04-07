@@ -35,8 +35,7 @@
       "parameters": {
         "resource": "file",
         "operation": "upload",
-        "binaryData": true,
-        "binaryPropertyName": "image",
+        "inputDataFieldName": "image",
         "name": "={{ $json.filename }}",
         "options": {}
       },
