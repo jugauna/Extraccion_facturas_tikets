@@ -1,0 +1,15 @@
+.git
+Documentos
+**/__pycache__
+**/*.pyc
+.venv
+venv
+.env
+.env.*
+*.md
+autodoc-v2
+frontend
+n8n
+.cursor
+.idea
+.vscode
