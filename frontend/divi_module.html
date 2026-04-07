@@ -1,7 +1,8 @@
 <!--
   Autodoc v2 — Módulo Código Divi (WordPress)
-  1) Reemplazá N8N_WEBHOOK_URL por la URL pública de tu Webhook n8n (Hostinger).
-  2) FormData: campo "images" (repetido) para imágenes y PDFs; "user_notes" opcional.
+  FormData: "images" (repetido), "user_notes" y "batch_id" opcionales.
+  webhook-test = pruebas en el editor n8n. Con el flujo ACTIVO en producción, cambiá a:
+  https://n8n.srv1392353.hstgr.cloud/webhook/autodoc-multi-ticket
 -->
 <div id="autodoc-rendiciones" class="autodoc-wrap">
   <form id="autodoc_form" class="autodoc-form">
@@ -43,7 +44,7 @@
 
 <script>
 (function () {
-  const N8N_WEBHOOK_URL = 'https://TU-DOMINIO-EN-HOSTINGER.TLD/webhook/autodoc-multi-ticket';
+  const N8N_WEBHOOK_URL = 'https://n8n.srv1392353.hstgr.cloud/webhook-test/autodoc-multi-ticket';
 
   const form = document.getElementById('autodoc_form');
   const input = document.getElementById('ticket_files');
