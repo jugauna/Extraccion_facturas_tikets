@@ -94,7 +94,7 @@ class TicketProcessResult(BaseModel):
 class ProcessBatchResponse(BaseModel):
     batch_id: Optional[str] = None
     ticket_count: int = 0
-    voice_transcript: Optional[str] = None
+    user_notes: Optional[str] = None
     results: List[TicketProcessResult] = Field(default_factory=list)
 
 

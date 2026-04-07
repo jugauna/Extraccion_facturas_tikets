@@ -28,11 +28,11 @@ class IdempotencyStore:
                 del self._data[k]
 
     @staticmethod
-    def fingerprint(image_bytes: bytes, voice_transcript: str) -> str:
+    def fingerprint(file_bytes: bytes, user_notes: str) -> str:
         h = hashlib.sha256()
-        h.update(image_bytes)
+        h.update(file_bytes)
         h.update(b"\x00")
-        h.update(voice_transcript.encode("utf-8"))
+        h.update(user_notes.encode("utf-8"))
         return h.hexdigest()
 
     def get(self, key: str) -> Optional[Any]:

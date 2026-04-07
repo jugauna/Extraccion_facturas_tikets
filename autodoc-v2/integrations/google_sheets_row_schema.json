@@ -30,7 +30,7 @@
     "HITL_Status",
     "HITL_Decision_At",
     "Execution_Id",
-    "Transcripcion_Voz",
+    "User_Notes",
     "Drive_File_Id",
     "Idempotency_Key"
   ],

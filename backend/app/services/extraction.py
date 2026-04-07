@@ -24,18 +24,18 @@ def _load_system_prompt() -> str:
         raise
 
 
-def _vision_messages(image_bytes: bytes, mime: str, voice_transcript: str) -> list[dict[str, Any]]:
+def _vision_messages(image_bytes: bytes, mime: str, user_notes: str) -> list[dict[str, Any]]:
     b64 = base64.standard_b64encode(image_bytes).decode("ascii")
     data_url = f"data:{mime};base64,{b64}"
     user_text = (
         "Analizá el comprobante en la imagen y emití ÚNICAMENTE el JSON solicitado en el system prompt. "
         "No incluyas markdown ni texto fuera del JSON."
     )
-    if voice_transcript.strip():
+    if user_notes.strip():
         user_text += (
-            "\n\nContexto adicional (transcripción de voz del usuario; puede aclarar ítems o montos; "
-            "si contradice la imagen, priorizá la imagen salvo que la voz corrija un error evidente): "
-            f"\n{voice_transcript.strip()}"
+            "\n\nNotas del usuario (texto libre; pueden aclarar ítems o montos; "
+            "si contradice el comprobante, priorizá el comprobante salvo que la nota corrija un error evidente): "
+            f"\n{user_notes.strip()}"
         )
     return [
         {
@@ -48,7 +48,7 @@ def _vision_messages(image_bytes: bytes, mime: str, voice_transcript: str) -> li
     ]
 
 
-def extract_accounting_rows(image_bytes: bytes, mime: str, voice_transcript: str) -> Tuple[List[AccountingRow], str]:
+def extract_accounting_rows(image_bytes: bytes, mime: str, user_notes: str) -> Tuple[List[AccountingRow], str]:
     settings = get_settings()
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY no configurada")
@@ -57,15 +57,15 @@ def extract_accounting_rows(image_bytes: bytes, mime: str, voice_transcript: str
     client = OpenAI(api_key=settings.openai_api_key)
     messages = [
         {"role": "system", "content": system_prompt},
-        *_vision_messages(image_bytes, mime, voice_transcript),
+        *_vision_messages(image_bytes, mime, user_notes),
     ]
 
     logger.info(
-        "OpenAI vision model=%s bytes=%s mime=%s transcript_len=%s",
+        "OpenAI vision model=%s bytes=%s mime=%s user_notes_len=%s",
         settings.openai_model_vision,
         len(image_bytes),
         mime,
-        len(voice_transcript or ""),
+        len(user_notes or ""),
     )
 
     try:

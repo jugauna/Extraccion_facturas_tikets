@@ -1,14 +1,12 @@
 {
-  "name": "Autodoc v2 — Webhook → Whisper → FastAPI → RAG → Sheets → HITL (Wait)",
+  "name": "Autodoc v2 — Webhook → FastAPI → RAG → Sheets → HITL (Wait)",
   "active": false,
-  "settings": {
-    "executionOrder": "v1"
-  },
+  "settings": { "executionOrder": "v1" },
   "meta": {
     "templateCredsSetupCompleted": false,
     "instanceId": "autodoc-v2"
   },
-  "versionId": "00000000-0000-0000-0000-000000000001",
+  "versionId": "00000000-0000-0000-0000-000000000002",
   "tags": [],
   "nodes": [
     {
@@ -16,10 +14,7 @@
         "httpMethod": "POST",
         "path": "autodoc-v2-ingest",
         "responseMode": "onReceived",
-        "options": {
-          "binaryPropertyName": "data",
-          "rawBody": false
-        }
+        "options": {}
       },
       "id": "webhook-ingest",
       "name": "Webhook_Ingest",
@@ -30,124 +25,16 @@
     },
     {
       "parameters": {
-        "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
-          "conditions": [
-            {
-              "id": "has-audio",
-              "leftValue": "={{ $binary.audio ? 'yes' : 'no' }}",
-              "rightValue": "yes",
-              "operator": { "type": "string", "operation": "equals" }
-            }
-          ],
-          "combinator": "or"
-        }
-      },
-      "id": "if-audio",
-      "name": "IF_Has_Audio_Binary",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [-960, 200]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://api.openai.com/v1/audio/transcriptions",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
-            }
-          ]
-        },
-        "sendBody": true,
-        "contentType": "multipart-form-data",
-        "bodyParameters": {
-          "parameters": [
-            {
-              "parameterType": "formBinaryData",
-              "name": "file",
-              "inputDataFieldName": "audio"
-            },
-            {
-              "parameterType": "formData",
-              "name": "model",
-              "value": "whisper-1"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "http-whisper",
-      "name": "HTTP_Whisper",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [-720, 80]
-    },
-    {
-      "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "vt",
-              "name": "voice_transcript",
-              "type": "string",
-              "value": ""
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "set-empty-transcript",
-      "name": "Set_Empty_Transcript",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [-720, 320]
-    },
-    {
-      "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "vt-whisper",
-              "name": "voice_transcript",
-              "type": "string",
-              "value": "={{ $json.text || \"\" }}"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "set-whisper-text",
-      "name": "Set_Transcript_From_Whisper",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [-480, 80]
-    },
-    {
-      "parameters": {
-        "mode": "combine",
-        "combineBy": "combineByPosition",
-        "options": {}
-      },
-      "id": "merge-transcripts",
-      "name": "Merge_Transcripts",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3,
-      "position": [-520, 240]
-    },
-    {
-      "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const wh = $('Webhook_Ingest').first();\nconst cur = $input.first();\nconst idempotency_key = $execution.id;\nconst vt = cur.json.voice_transcript ?? '';\nconst imageBin = wh.binary?.image || wh.binary?.file || wh.binary?.data;\nif (!imageBin) {\n  throw new Error('Falta binario de imagen: configure el formulario webhook con campo file \"image\" o \"file\".');\n}\nreturn [{ json: { idempotency_key, voice_transcript: vt, hitl_status: 'PENDING' }, binary: { image: imageBin } }];"
+        "jsCode": "const wh = $('Webhook_Ingest').first();\nconst body = wh.json.body || wh.json;\nconst user_notes = String(body.user_notes || body.notes || '');\nconst idempotency_key = $execution.id;\nconst bin = wh.binary?.file || wh.binary?.image || wh.binary?.data;\nif (!bin) {\n  throw new Error('Falta archivo: enviá multipart con campo \"file\" o \"image\" (imagen o PDF).');\n}\nreturn [{ json: { idempotency_key, user_notes, hitl_status: 'PENDING' }, binary: { file: bin } }];"
       },
       "id": "code-attach-binary",
-      "name": "Code_Reattach_Image",
+      "name": "Code_Reattach_File",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-280, 240]
+      "position": [-960, 200],
+      "notesInFlow": true,
+      "notes": "Lee user_notes del body. Binario: file | image | data."
     },
     {
       "parameters": {
@@ -172,13 +59,13 @@
           "parameters": [
             {
               "parameterType": "formBinaryData",
-              "name": "image",
-              "inputDataFieldName": "image"
+              "name": "file",
+              "inputDataFieldName": "file"
             },
             {
               "parameterType": "formData",
-              "name": "voice_transcript",
-              "value": "={{ $json.voice_transcript }}"
+              "name": "user_notes",
+              "value": "={{ $json.user_notes }}"
             }
           ]
         },
@@ -188,7 +75,7 @@
       "name": "HTTP_FastAPI_ProcessTicket",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-40, 240]
+      "position": [-720, 200]
     },
     {
       "parameters": {
@@ -208,18 +95,18 @@
       "name": "Set_Ethics_Manual",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [200, 240]
+      "position": [-480, 200]
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const apiKey = $env.OPENAI_API_KEY;\nif (!apiKey) throw new Error('Configure OPENAI_API_KEY en el entorno de n8n');\nconst ethics = $('Set_Ethics_Manual').first().json.manual_etica;\nconst row = $input.first().json;\nconst extracted = JSON.stringify(row.sheets_rows || []);\nfunction cosine(a, b) {\n  let d = 0, na = 0, nb = 0;\n  for (let i = 0; i < a.length; i++) { d += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }\n  return d / (Math.sqrt(na) * Math.sqrt(nb) + 1e-9);\n}\nconst chunks = ethics.split(/\\n\\n+/).map(s => s.trim()).filter(Boolean).slice(0, 24);\nconst input = [extracted, ...chunks];\nconst res = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.openai.com/v1/embeddings',\n  headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' },\n  body: { model: 'text-embedding-3-small', input },\n  json: true,\n});\nconst vec = res.data.sort((x, y) => x.index - y.index).map(d => d.embedding);\nconst v0 = vec[0];\nlet best = -1;\nlet idx = 0;\nfor (let i = 1; i < vec.length; i++) {\n  const c = cosine(v0, vec[i]);\n  if (c > best) { best = c; idx = i - 1; }\n}\nconst Compliance_Score = Math.max(0, Math.min(100, Math.round(best * 100)));\nconst Compliance_Notes = `RAG-lite: mayor similitud coseno con fragmento ${idx} del manual (embeddings OpenAI). Para Vector Store In-Memory nativo, instalar @n8n/n8n-nodes-langchain y reemplazar este nodo.`;\nreturn [{ json: { ...row, Compliance_Score, Compliance_Notes, rag_best_cosine: best } }];"
+        "jsCode": "const apiKey = $env.OPENAI_API_KEY;\nif (!apiKey) throw new Error('Configure OPENAI_API_KEY en el entorno de n8n');\nconst ethics = $('Set_Ethics_Manual').first().json.manual_etica;\nconst row = $input.first().json;\nconst extracted = JSON.stringify(row.sheets_rows || []);\nfunction cosine(a, b) {\n  let d = 0, na = 0, nb = 0;\n  for (let i = 0; i < a.length; i++) { d += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }\n  return d / (Math.sqrt(na) * Math.sqrt(nb) + 1e-9);\n}\nconst chunks = ethics.split(/\\n\\n+/).map(s => s.trim()).filter(Boolean).slice(0, 24);\nconst input = [extracted, ...chunks];\nconst res = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.openai.com/v1/embeddings',\n  headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' },\n  body: { model: 'text-embedding-3-small', input },\n  json: true,\n});\nconst vec = res.data.sort((x, y) => x.index - y.index).map(d => d.embedding);\nconst v0 = vec[0];\nlet best = -1;\nlet idx = 0;\nfor (let i = 1; i < vec.length; i++) {\n  const c = cosine(v0, vec[i]);\n  if (c > best) { best = c; idx = i - 1; }\n}\nconst Compliance_Score = Math.max(0, Math.min(100, Math.round(best * 100)));\nconst Compliance_Notes = `RAG-lite: mayor similitud coseno con fragmento ${idx} del manual (embeddings OpenAI).`;\nreturn [{ json: { ...row, Compliance_Score, Compliance_Notes, rag_best_cosine: best } }];"
       },
       "id": "code-rag",
       "name": "Code_RAG_Compliance_Embeddings",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [440, 240]
+      "position": [-240, 200]
     },
     {
       "parameters": {
@@ -253,9 +140,9 @@
             { "id": "c26", "name": "Execution_Id", "type": "string", "value": "={{ $execution.id }}" },
             {
               "id": "c27",
-              "name": "Transcripcion_Voz",
+              "name": "User_Notes",
               "type": "string",
-              "value": "={{ $('Code_Reattach_Image').first().json.voice_transcript || \"\" }}"
+              "value": "={{ $('Code_Reattach_File').first().json.user_notes || \"\" }}"
             }
           ]
         },
@@ -265,7 +152,7 @@
       "name": "Set_Flat_Sheets_Row",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [680, 240]
+      "position": [0, 200]
     },
     {
       "parameters": {
@@ -294,7 +181,7 @@
       "name": "GoogleSheets_Append",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
-      "position": [920, 240],
+      "position": [240, 200],
       "credentials": {
         "googleApi": {
           "id": "REPLACE_ME",
@@ -311,7 +198,7 @@
       "name": "Wait_HITL_Approval",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [1120, 240],
+      "position": [480, 200],
       "webhookId": "autodoc-v2-hitl-wait"
     },
     {
@@ -332,7 +219,7 @@
       "name": "Set_Email_HTML",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [1340, 240]
+      "position": [720, 200]
     },
     {
       "parameters": {
@@ -348,7 +235,7 @@
       "name": "Gmail_Dinamico_HTML",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
-      "position": [1560, 240],
+      "position": [960, 200],
       "credentials": {
         "gmailOAuth2": {
           "id": "REPLACE_ME",
@@ -359,27 +246,9 @@
   ],
   "connections": {
     "Webhook_Ingest": {
-      "main": [[{ "node": "IF_Has_Audio_Binary", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Code_Reattach_File", "type": "main", "index": 0 }]]
     },
-    "IF_Has_Audio_Binary": {
-      "main": [
-        [{ "node": "HTTP_Whisper", "type": "main", "index": 0 }],
-        [{ "node": "Set_Empty_Transcript", "type": "main", "index": 0 }]
-      ]
-    },
-    "HTTP_Whisper": {
-      "main": [[{ "node": "Set_Transcript_From_Whisper", "type": "main", "index": 0 }]]
-    },
-    "Set_Transcript_From_Whisper": {
-      "main": [[{ "node": "Merge_Transcripts", "type": "main", "index": 0 }]]
-    },
-    "Set_Empty_Transcript": {
-      "main": [[{ "node": "Merge_Transcripts", "type": "main", "index": 1 }]]
-    },
-    "Merge_Transcripts": {
-      "main": [[{ "node": "Code_Reattach_Image", "type": "main", "index": 0 }]]
-    },
-    "Code_Reattach_Image": {
+    "Code_Reattach_File": {
       "main": [[{ "node": "HTTP_FastAPI_ProcessTicket", "type": "main", "index": 0 }]]
     },
     "HTTP_FastAPI_ProcessTicket": {

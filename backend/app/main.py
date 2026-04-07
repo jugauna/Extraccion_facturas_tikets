@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.schemas import ErrorResponse, ProcessBatchResponse, TicketProcessResult
-from app.services.extraction import extract_accounting_rows
+from app.services.extract_ticket import extract_ticket_from_bytes
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,7 +21,7 @@ logger = logging.getLogger("autodoc.batch")
 
 app = FastAPI(
     title="Autodoc v2 — Multi-ticket",
-    description="Procesamiento por lote de imágenes (GPT-4o Vision) para Rendiciones.",
+    description="Procesamiento por lote de imágenes y PDFs (GPT-4o Vision) para Rendiciones.",
     version="2.1.0",
 )
 
@@ -65,10 +65,12 @@ def require_autodoc_secret(
 
 
 def _mime_from_upload(upload: UploadFile) -> str:
+    name = (upload.filename or "").lower()
+    if name.endswith(".pdf"):
+        return "application/pdf"
     ct = (upload.content_type or "").split(";")[0].strip().lower()
     if ct and ct != "application/octet-stream":
         return ct
-    name = (upload.filename or "").lower()
     if name.endswith((".jpg", ".jpeg")):
         return "image/jpeg"
     if name.endswith(".png"):
@@ -96,19 +98,22 @@ async def health() -> dict[str, str]:
 )
 async def process_batch(
     _: Annotated[None, Depends(require_autodoc_secret)],
-    images: Annotated[List[UploadFile], File(description="Uno o más archivos de imagen de tickets")],
-    voice_transcript: Annotated[Optional[str], Form()] = None,
+    images: Annotated[
+        List[UploadFile],
+        File(description="Uno o más archivos: imágenes (tickets) y/o PDFs"),
+    ],
+    user_notes: Annotated[Optional[str], Form(description="Notas opcionales del usuario sobre el lote")] = None,
     batch_id: Annotated[Optional[str], Form()] = None,
 ) -> ProcessBatchResponse | JSONResponse:
     if not images:
         return JSONResponse(
             status_code=400,
-            content=ErrorResponse(error="validation_error", detail="Enviá al menos una imagen").model_dump(),
+            content=ErrorResponse(error="validation_error", detail="Enviá al menos un archivo").model_dump(),
         )
 
     bid = (batch_id or "").strip() or str(uuid.uuid4())
-    transcript = (voice_transcript or "").strip()
-    logger.info("process-batch batch_id=%s files=%s transcript_len=%s", bid, len(images), len(transcript))
+    notes = (user_notes or "").strip()
+    logger.info("process-batch batch_id=%s files=%s user_notes_len=%s", bid, len(images), len(notes))
 
     results: list[TicketProcessResult] = []
 
@@ -142,11 +147,11 @@ async def process_batch(
             continue
 
         mime = _mime_from_upload(upload)
-        if not mime.startswith("image/"):
-            logger.warning("Tipo no imagen index=%s mime=%s", index, mime)
+        if not mime.startswith("image/") and mime != "application/pdf":
+            logger.warning("Tipo inusual index=%s mime=%s", index, mime)
 
         try:
-            rows, _raw = extract_accounting_rows(data, mime, transcript)
+            rows, _raw = extract_ticket_from_bytes(data, mime, name, notes)
             sheets = [r.to_sheets_row() for r in rows]
             results.append(
                 TicketProcessResult(
@@ -189,6 +194,6 @@ async def process_batch(
     return ProcessBatchResponse(
         batch_id=bid,
         ticket_count=len(images),
-        voice_transcript=transcript or None,
+        user_notes=notes or None,
         results=results,
     )

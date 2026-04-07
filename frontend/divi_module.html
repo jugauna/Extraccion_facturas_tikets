@@ -1,15 +1,22 @@
 <!--
   Autodoc v2 — Módulo Código Divi (WordPress)
   1) Reemplazá N8N_WEBHOOK_URL por la URL pública de tu Webhook n8n (Hostinger).
-  2) El formulario usa el nombre de campo "images" (repetido) para compatibilidad con FastAPI /process-batch y el flujo n8n.
+  2) FormData: campo "images" (repetido) para imágenes y PDFs; "user_notes" opcional.
 -->
 <div id="autodoc-rendiciones" class="autodoc-wrap">
   <form id="autodoc_form" class="autodoc-form">
-    <label for="ticket_files">Seleccionar tickets (imágenes)</label>
-    <input type="file" id="ticket_files" name="ticket_files" multiple accept="image/*" required />
+    <label for="ticket_files">Seleccionar tickets (imágenes o PDF)</label>
+    <input
+      type="file"
+      id="ticket_files"
+      name="ticket_files"
+      multiple
+      accept="image/*,application/pdf"
+      required
+    />
 
-    <label for="voice_note">Nota de voz (opcional, texto)</label>
-    <textarea id="voice_note" rows="2" placeholder="Transcripción manual o aclaración del lote"></textarea>
+    <label for="user_notes">Notas (opcional)</label>
+    <textarea id="user_notes" name="user_notes" rows="3" placeholder="Observaciones sobre el lote o archivos"></textarea>
 
     <button type="submit" id="autodoc_submit">Enviar a Rendiciones</button>
   </form>
@@ -40,7 +47,7 @@
 
   const form = document.getElementById('autodoc_form');
   const input = document.getElementById('ticket_files');
-  const note = document.getElementById('voice_note');
+  const notesEl = document.getElementById('user_notes');
   const statusEl = document.getElementById('autodoc_status');
   const btn = document.getElementById('autodoc_submit');
   const progWrap = document.querySelector('.autodoc-progress-wrap');
@@ -65,7 +72,7 @@
     setStatus('', null);
     const files = input.files ? Array.from(input.files) : [];
     if (!files.length) {
-      setStatus('Seleccioná al menos una imagen.', 'error');
+      setStatus('Seleccioná al menos un archivo.', 'error');
       return;
     }
 
@@ -73,9 +80,9 @@
     files.forEach(function (f) {
       fd.append('images', f, f.name);
     });
-    const vt = (note && note.value) ? note.value.trim() : '';
-    if (vt) {
-      fd.append('voice_transcript', vt);
+    const un = (notesEl && notesEl.value) ? notesEl.value.trim() : '';
+    if (un) {
+      fd.append('user_notes', un);
     }
     fd.append('batch_id', crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
 
@@ -84,7 +91,7 @@
 
     const ctrl = new AbortController();
     const slowMsg = window.setTimeout(function () {
-      setStatus('Procesando varios tickets puede tardar más de 30 segundos…', null);
+      setStatus('Procesando varios archivos puede tardar más de 30 segundos…', null);
     }, 8000);
 
     try {

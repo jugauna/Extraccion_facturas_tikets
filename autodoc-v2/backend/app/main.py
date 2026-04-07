@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from app.config import get_settings
 from app.idempotency import idempotency_store
 from app.models import AccountingRow, ErrorResponse, ProcessTicketResponse
-from app.services.extraction import extract_accounting_rows
+from app.services.extract_ticket import extract_ticket_from_bytes
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,7 +20,7 @@ logger = logging.getLogger("autodoc")
 
 app = FastAPI(
     title="Autodoc v2",
-    description="Motor FastAPI para extracción contable multimodal (GPT-4o Vision).",
+    description="Motor FastAPI para extracción contable (GPT-4o Vision): imágenes y PDF.",
     version="2.0.0",
 )
 
@@ -40,10 +40,12 @@ def require_autodoc_secret(x_autodoc_secret: Annotated[str | None, Header(alias=
 
 
 def _mime_from_upload(upload: UploadFile) -> str:
+    name = (upload.filename or "").lower()
+    if name.endswith(".pdf"):
+        return "application/pdf"
     ct = (upload.content_type or "").split(";")[0].strip().lower()
     if ct and ct != "application/octet-stream":
         return ct
-    name = (upload.filename or "").lower()
     if name.endswith((".jpg", ".jpeg")):
         return "image/jpeg"
     if name.endswith(".png"):
@@ -67,41 +69,41 @@ async def health() -> dict[str, str]:
 )
 async def process_ticket(
     _: Annotated[None, Depends(require_autodoc_secret)],
-    image: Annotated[UploadFile, File(..., description="Imagen del ticket o factura")],
-    voice_transcript: Annotated[
+    file: Annotated[UploadFile, File(..., description="Imagen o PDF del comprobante")],
+    user_notes: Annotated[
         Optional[str],
-        Form(description="Transcripción opcional de voz (p.ej. salida de Whisper en n8n)"),
+        Form(description="Notas opcionales del usuario"),
     ] = None,
     idempotency_key: Annotated[Optional[str], Header(alias="Idempotency-Key")] = None,
 ) -> ProcessTicketResponse | JSONResponse:
-    transcript = (voice_transcript or "").strip()
+    notes = (user_notes or "").strip()
     logger.info(
-        "process-ticket filename=%s content_type=%s transcript_len=%s idempotency_key=%s",
-        image.filename,
-        image.content_type,
-        len(transcript),
+        "process-ticket filename=%s content_type=%s user_notes_len=%s idempotency_key=%s",
+        file.filename,
+        file.content_type,
+        len(notes),
         idempotency_key or "-",
     )
 
     try:
-        image_bytes = await image.read()
+        file_bytes = await file.read()
     except Exception:
-        logger.exception("No se pudo leer el archivo de imagen")
+        logger.exception("No se pudo leer el archivo")
         return JSONResponse(
             status_code=400,
-            content=ErrorResponse(error="read_error", detail="No se pudo leer la imagen").model_dump(),
+            content=ErrorResponse(error="read_error", detail="No se pudo leer el archivo").model_dump(),
         )
 
-    if not image_bytes:
+    if not file_bytes:
         return JSONResponse(
             status_code=400,
-            content=ErrorResponse(error="validation_error", detail="Imagen vacía").model_dump(),
+            content=ErrorResponse(error="validation_error", detail="Archivo vacío").model_dump(),
         )
 
     cache_key = (
         f"idemp:{idempotency_key.strip()}"
         if idempotency_key and idempotency_key.strip()
-        else f"fp:{idempotency_store.fingerprint(image_bytes, transcript)}"
+        else f"fp:{idempotency_store.fingerprint(file_bytes, notes)}"
     )
     cached = idempotency_store.get(cache_key)
     if cached is not None:
@@ -111,13 +113,13 @@ async def process_ticket(
         payload.idempotency_key = idempotency_key.strip() if idempotency_key else None
         return payload
 
-    mime = _mime_from_upload(image)
+    mime = _mime_from_upload(file)
     warnings: list[str] = []
-    if not mime.startswith("image/"):
-        warnings.append(f"content-type inusual ({mime}); se intentará como imagen")
+    if not mime.startswith("image/") and mime != "application/pdf":
+        warnings.append(f"content-type inusual ({mime}); se intentará según extensión")
 
     try:
-        rows, raw = extract_accounting_rows(image_bytes, mime, transcript)
+        rows, raw = extract_ticket_from_bytes(file_bytes, mime, file.filename or "ticket", notes)
     except ValueError as e:
         logger.warning("Validación / parsing: %s", e)
         return JSONResponse(
@@ -142,7 +144,7 @@ async def process_ticket(
             status_code=400,
             content=ErrorResponse(
                 error="no_rows",
-                detail="El modelo no devolvió filas; reenviá una imagen más clara",
+                detail="El modelo no devolvió filas; reenviá un archivo más claro",
             ).model_dump(),
         )
 
