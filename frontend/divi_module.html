@@ -1,7 +1,14 @@
 <!--
   Autodoc v2 — Módulo Código Divi (WordPress)
   FormData: "images" (repetido), "user_notes" y "batch_id" opcionales.
-  webhook-test = pruebas en el editor n8n. Con el flujo ACTIVO en producción, cambiá a:
+
+  Si ves "Failed to fetch" = CORS: el navegador exige que n8n permita tu dominio.
+  En el servidor n8n (Docker / panel Hostinger) agregá variable de entorno, por ejemplo:
+    N8N_CORS_ALLOW_ORIGIN=https://TU-SITIO-WORDPRESS.com
+  Para pruebas rápidas (menos seguro): N8N_CORS_ALLOW_ORIGIN=*
+  Reiniciá n8n después de cambiar .env.
+
+  webhook-test = pruebas en el editor. En producción con flujo ACTIVO usá:
   https://n8n.srv1392353.hstgr.cloud/webhook/autodoc-multi-ticket
 -->
 <div id="autodoc-rendiciones" class="autodoc-wrap">
@@ -122,8 +129,13 @@
       clearTimeout(slowMsg);
       if (err.name === 'AbortError') {
         setStatus('Solicitud cancelada.', 'error');
+      } else if (String(err.message || '').indexOf('fetch') !== -1) {
+        setStatus(
+          'No se pudo contactar a n8n (red o CORS). En el servidor n8n definí N8N_CORS_ALLOW_ORIGIN con la URL exacta de este sitio (o * para probar) y reiniciá el servicio. Revisá también F12 → Consola / Red.',
+          'error'
+        );
       } else {
-        setStatus('Fallo de red o CORS: ' + err.message, 'error');
+        setStatus('Error: ' + err.message, 'error');
       }
     } finally {
       btn.disabled = false;
