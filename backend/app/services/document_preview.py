@@ -31,7 +31,9 @@ def bytes_for_openai_vision(file_bytes: bytes, mime: str, filename: str) -> tupl
     """
     if not file_bytes:
         raise ValueError("Archivo vacío")
-    if _is_pdf(mime, filename) or _is_pdf_magic(file_bytes):
+    # Solo rasterizar si los bytes son PDF. Las páginas ya renderizadas (JPEG) en extract_ticket
+    # siguen teniendo filename *.pdf y MIME image/jpeg: no deben pasar por pdf2image otra vez.
+    if _is_pdf_magic(file_bytes):
         pages = pdf_bytes_to_jpeg_pages(file_bytes, dpi=200)
         if not pages:
             raise ValueError("PDF sin páginas renderizables")
