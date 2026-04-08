@@ -30,6 +30,31 @@ def binary_format_hint(data: bytes) -> str:
     if not data:
         return "contenido vacío."
     n = len(data)
+    # Caso típico n8n: se manda un ID o número como "archivo" en vez del binario de la foto.
+    if n <= 512:
+        try:
+            text = data.decode("ascii", errors="strict").strip()
+        except UnicodeDecodeError:
+            text = ""
+        if text and len(text) == n:
+            if text.isdigit():
+                return (
+                    "el cuerpo es solo dígitos en texto ASCII (ej. «"
+                    + text[:24]
+                    + ("…»" if len(text) > 24 else "»")
+                    + "), no bytes de imagen/PDF. En n8n el multipart debe llevar el binario del archivo "
+                    "(p. ej. Buffer desde getBinaryDataBuffer / item.binary.image), no un campo numérico del JSON."
+                )
+            if text.isascii() and 1 <= len(text) <= 128:
+                printable = sum(32 <= ord(c) <= 126 or c in "\r\n\t" for c in text)
+                if printable == len(text) and not text.startswith(("{", "[", "<", "%PDF")):
+                    # Texto corto sin firma de archivo
+                    digit_ratio = sum(c.isdigit() for c in text) / len(text)
+                    if digit_ratio >= 0.85 or (len(text) <= 20 and "%" not in text):
+                        return (
+                            "el cuerpo parece texto ASCII (no binario de imagen). "
+                            "Revisá que el nodo Code / HTTP envíe el archivo como binario, no el contenido de un campo de texto."
+                        )
     if n < 32:
         return f"muy pocos bytes ({n}); posible carga incompleta desde n8n."
     if data[:2] == b"PK":
