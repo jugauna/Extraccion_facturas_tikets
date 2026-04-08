@@ -17,6 +17,7 @@ from starlette.datastructures import Headers
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+from openai import BadRequestError
 
 from app.config import get_settings
 from app.schemas import (
@@ -525,6 +526,23 @@ async def process_batch(
             return JSONResponse(
                 status_code=503,
                 content=ErrorResponse(error="misconfigured", detail=str(e)).model_dump(),
+            )
+        except BadRequestError as e:
+            omsg = e.message
+            b = e.body
+            if isinstance(b, dict):
+                err = b.get("error")
+                if isinstance(err, dict) and err.get("message"):
+                    omsg = str(err["message"])
+            logger.warning("OpenAI 400 index=%s file=%s: %s", index, name, omsg)
+            results.append(
+                TicketProcessResult(
+                    filename=name,
+                    index=index,
+                    success=False,
+                    error="openai_error",
+                    detail=omsg[:4000],
+                ),
             )
         except Exception:
             logger.error("Error interno index=%s:\n%s", index, traceback.format_exc())
