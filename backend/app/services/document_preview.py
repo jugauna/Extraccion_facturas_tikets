@@ -9,6 +9,45 @@ from app.services.pdf_pages import pdf_bytes_to_jpeg_pages
 
 logger = logging.getLogger(__name__)
 
+
+def _register_heif_opener() -> None:
+    try:
+        from pillow_heif import register_heif_opener
+
+        register_heif_opener()
+        logger.info("Soporte HEIC/HEIF activo (pillow-heif)")
+    except Exception as e:
+        logger.warning("pillow-heif no disponible: HEIC de iPhone puede fallar (%s)", e)
+
+
+_register_heif_opener()
+
+
+def _looks_like_isobmff_heic(b: bytes) -> bool:
+    """ISO BMFF con marca típica de HEIC/HEIF (fotos iPhone)."""
+    if len(b) < 12 or b[4:8] != b"ftyp":
+        return False
+    brand = b[8:12]
+    if brand in (b"heic", b"heix", b"hevc", b"mif1", b"msf1"):
+        return True
+    return b"heic" in b[:64] or b"mif1" in b[:64]
+
+
+def _decode_image_open_error_message(file_bytes: bytes, filename: str, err: Exception) -> str:
+    fn = (filename or "").lower()
+    tail = str(err)[:280]
+    if _looks_like_isobmff_heic(file_bytes) or fn.endswith((".heic", ".heif")):
+        return (
+            "Archivo HEIC/HEIF (típico de iPhone). Con la imagen actual del backend (pillow-heif) debería abrirse; "
+            "si no, en Ajustes → Cámara → Formatos elegí «Más compatible» o exportá JPG. "
+            f"Detalle: {tail}"
+        )
+    return (
+        "No se pudo abrir el archivo como imagen (¿archivo corrupto, binario mal enviado desde n8n o formato no soportado?). "
+        "Probá JPG/PNG/PDF. "
+        f"Detalle: {tail}"
+    )
+
 MAX_EDGE = 1400
 JPEG_QUALITY = 82
 # Vision API solo acepta png / jpeg / gif / webp; re-encodamos a PNG (máxima compatibilidad).
@@ -43,10 +82,7 @@ def bytes_for_openai_vision(file_bytes: bytes, mime: str, filename: str) -> tupl
             im = Image.open(BytesIO(file_bytes))
             im.load()
         except Exception as e:
-            raise ValueError(
-                "No se pudo abrir la imagen. Formatos típicos: JPG, PNG, PDF. "
-                "En iPhone desactivá HEIC o convertí a JPG antes de subir."
-            ) from e
+            raise ValueError(_decode_image_open_error_message(file_bytes, filename, e)) from e
     im = im.convert("RGB")
     im.thumbnail((MAX_VISION_EDGE, MAX_VISION_EDGE), Image.Resampling.LANCZOS)
     buf = BytesIO()

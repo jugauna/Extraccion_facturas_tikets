@@ -138,6 +138,8 @@ def _mime_from_upload(upload: UploadFile) -> str:
         return "image/webp"
     if name.endswith(".gif"):
         return "image/gif"
+    if name.endswith((".heic", ".heif")):
+        return "image/heic"
     return "image/jpeg"
 
 
@@ -262,6 +264,10 @@ def _upload_files_from_n8n_wrapped_strings(form) -> list:
         filename, mime = "upload.webp", "image/webp"
     elif data[:6] in (b"GIF87a", b"GIF89a"):
         filename, mime = "upload.gif", "image/gif"
+    elif len(data) >= 12 and data[4:8] == b"ftyp" and (
+        data[8:12] in (b"heic", b"heix", b"hevc", b"mif1", b"msf1") or b"heic" in data[:64] or b"mif1" in data[:64]
+    ):
+        filename, mime = "upload.heic", "image/heic"
 
     if isinstance(t_raw, str) and "/" in t_raw:
         hint = t_raw.split(";")[0].strip().lower()
@@ -272,6 +278,8 @@ def _upload_files_from_n8n_wrapped_strings(form) -> list:
             "image/png",
             "image/webp",
             "image/gif",
+            "image/heic",
+            "image/heif",
         ):
             mime = hint
             if "pdf" in mime:
@@ -280,6 +288,8 @@ def _upload_files_from_n8n_wrapped_strings(form) -> list:
                 filename = "upload.png"
             elif "gif" in mime:
                 filename = "upload.gif"
+            elif "heic" in mime or "heif" in mime:
+                filename = "upload.heic"
             elif "jpeg" in mime or "jpg" in mime or "webp" in mime:
                 filename = "upload.jpg" if "webp" not in mime else "upload.webp"
 
