@@ -7,6 +7,7 @@ import logging
 import os
 import secrets
 import traceback
+import urllib.error
 import urllib.request
 import uuid
 from io import BytesIO
@@ -39,7 +40,7 @@ from app.services.curation_store import (
     save_pending_batch,
     verify_token,
 )
-from app.services.document_preview import preview_for_curation_ui
+from app.services.document_preview import preview_bytes_or_placeholder
 from app.services.ethics_rag import analyze_expense_text
 from app.services.extract_ticket import extract_ticket_from_bytes
 
@@ -164,7 +165,7 @@ def _append_pending_manual_curation(
 ) -> None:
     """Si falla el modelo, igual cargar el comprobante en la UI con filas vacías (edición manual)."""
     try:
-        preview = preview_for_curation_ui(data, mime, name)
+        preview = preview_bytes_or_placeholder(data, mime, name)
         pending_docs.append(
             {
                 "index": index,
@@ -257,15 +258,28 @@ def _upload_files_from_n8n_wrapped_strings(form) -> list:
         filename, mime = "upload.png", "image/png"
     elif data[:2] == b"\xff\xd8":
         filename, mime = "upload.jpg", "image/jpeg"
+    elif len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        filename, mime = "upload.webp", "image/webp"
+    elif data[:6] in (b"GIF87a", b"GIF89a"):
+        filename, mime = "upload.gif", "image/gif"
 
     if isinstance(t_raw, str) and "/" in t_raw:
         hint = t_raw.split(";")[0].strip().lower()
-        if hint in ("application/pdf", "image/jpeg", "image/jpg", "image/png", "image/webp"):
+        if hint in (
+            "application/pdf",
+            "image/jpeg",
+            "image/jpg",
+            "image/png",
+            "image/webp",
+            "image/gif",
+        ):
             mime = hint
             if "pdf" in mime:
                 filename = "upload.pdf"
             elif "png" in mime:
                 filename = "upload.png"
+            elif "gif" in mime:
+                filename = "upload.gif"
             elif "jpeg" in mime or "jpg" in mime or "webp" in mime:
                 filename = "upload.jpg" if "webp" not in mime else "upload.webp"
 
@@ -279,6 +293,23 @@ def _upload_files_from_n8n_wrapped_strings(form) -> list:
         filename,
     )
     return [uf]
+
+
+def _persist_webhook_user_message(status: str, detail: str | None) -> str:
+    if status == "not_configured":
+        return (
+            "Confirmado: gold_dataset guardado en el servidor. "
+            "No está configurado PERSIST_WEBHOOK_URL: no se envió nada a n8n, Google Sheets ni Drive."
+        )
+    if status == "ok":
+        return (
+            "Confirmado: gold_dataset guardado y el webhook de persistencia respondió correctamente "
+            "(revisá en n8n que el flujo escriba en Sheets/Drive)."
+        )
+    return (
+        "Confirmado: gold_dataset guardado, pero el webhook de persistencia falló. "
+        f"Revisá el flujo n8n y los registros de Cloud Run. {detail or ''}"
+    ).strip()
 
 
 def _curation_public_url(path_with_query: str) -> str:
@@ -315,6 +346,11 @@ async def curation_page(request: Request, task_id: str, t: str = "", i: int = 0)
         )
     idx = max(0, min(int(i or 0), len(docs) - 1))
 
+    # Incrustar documentos en base64 UTF-8 evita que un JSON enorme / caracteres raros rompan <script>.
+    docs_b64 = base64.standard_b64encode(
+        json.dumps(docs, ensure_ascii=False).encode("utf-8"),
+    ).decode("ascii")
+
     return templates.TemplateResponse(
         request,
         "curation.html",
@@ -323,7 +359,7 @@ async def curation_page(request: Request, task_id: str, t: str = "", i: int = 0)
             "token": t,
             "batch_id": pending.get("batch_id", ""),
             "user_notes": pending.get("user_notes", ""),
-            "docs": docs,
+            "docs_b64": docs_b64,
             "doc_index": idx,
             "columns": list(SHEETS_COLUMNS_ORDER),
             "labels": {k: CURATION_FIELD_LABELS.get(k, k) for k in SHEETS_COLUMNS_ORDER},
@@ -377,31 +413,34 @@ async def curation_submit(body: CurationSubmitRequest) -> dict:
     )
     delete_pending(body.task_id)
 
-    # Notificar a n8n (persistencia final) si está configurado.
     settings = get_settings()
-    if settings.persist_webhook_url.strip():
-        # También enviamos filas "planas" para facilitar el append en Sheets.
-        flat_rows: list[dict] = []
-        for d in gold_docs:
-            for row in d.get("rows") or []:
-                if isinstance(row, dict):
-                    flat_rows.append(
-                        {
-                            **row,
-                            "Batch_Id": str(pending.get("batch_id", "")),
-                            "Source_File": d.get("filename", ""),
-                            "Doc_Index": d.get("index", 0),
-                        }
-                    )
+    persist_status = "not_configured"
+    persist_detail: str | None = None
 
-        payload = {
-            "task_id": body.task_id,
-            "batch_id": str(pending.get("batch_id", "")),
-            "user_notes": str(pending.get("user_notes", "")),
-            "gold_path": str(gold_path.name),
-            "docs": gold_docs,
-            "flat_rows": flat_rows,
-        }
+    flat_rows: list[dict] = []
+    for d in gold_docs:
+        for row in d.get("rows") or []:
+            if isinstance(row, dict):
+                flat_rows.append(
+                    {
+                        **row,
+                        "Batch_Id": str(pending.get("batch_id", "")),
+                        "Source_File": d.get("filename", ""),
+                        "Doc_Index": d.get("index", 0),
+                    }
+                )
+
+    payload = {
+        "task_id": body.task_id,
+        "batch_id": str(pending.get("batch_id", "")),
+        "user_notes": str(pending.get("user_notes", "")),
+        "gold_path": str(gold_path.name),
+        "docs": gold_docs,
+        "flat_rows": flat_rows,
+    }
+
+    if settings.persist_webhook_url.strip():
+        persist_status = "error"
         try:
             req = urllib.request.Request(
                 settings.persist_webhook_url.strip(),
@@ -412,15 +451,23 @@ async def curation_submit(body: CurationSubmitRequest) -> dict:
                 },
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+            with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310
                 _ = resp.read()
+            persist_status = "ok"
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode("utf-8", errors="replace")[:1200]
+            persist_detail = f"HTTP {e.code}: {raw or str(e)}"
+            logger.warning("Webhook persistencia HTTP %s: %s", e.code, persist_detail)
         except Exception as e:
-            # No bloquea el éxito de curación: el usuario ya confirmó.
-            logger.warning("No se pudo notificar persistencia a n8n: %s", e)
+            persist_detail = str(e)[:1200]
+            logger.warning("No se pudo notificar persistencia a n8n: %s", e, exc_info=True)
 
     return {
         "ok": True,
-        "message": "Confirmado. Se guardó gold_dataset y se notificó la persistencia (si está configurada).",
+        "message": _persist_webhook_user_message(persist_status, persist_detail),
+        "persist_webhook": persist_status,
+        "persist_detail": persist_detail,
+        "flat_rows_count": len(flat_rows),
     }
 
 
@@ -542,7 +589,7 @@ async def process_batch(
                     sheets_rows=sheets,
                 ),
             )
-            preview = preview_for_curation_ui(data, mime, name)
+            preview = preview_bytes_or_placeholder(data, mime, name)
             pending_docs.append(
                 {
                     "index": index,

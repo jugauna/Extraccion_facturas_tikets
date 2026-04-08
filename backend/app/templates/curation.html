@@ -81,7 +81,11 @@
     const TOKEN = {{ token | tojson }};
     const COLUMNS = {{ columns | tojson }};
     const LABELS = {{ labels | tojson }};
-    const DOCS = {{ docs | tojson }};
+    const DOCS = JSON.parse(
+      new TextDecoder('utf-8').decode(
+        Uint8Array.from(atob({{ docs_b64 | tojson }}), (c) => c.charCodeAt(0)),
+      ),
+    );
     let docIndex = {{ doc_index | tojson }};
 
     // visor: zoom / rotación
@@ -145,9 +149,22 @@
       }
 
       const img = document.getElementById('doc-img');
-      const pb = d.preview_base64 || '';
-      img.alt = pb ? (d.filename || 'Vista previa') : 'Vista previa no disponible — revisá los datos del formulario';
-      img.src = pb ? `data:${d.preview_mime || 'image/jpeg'};base64,${pb}` : '';
+      let pb = d.preview_base64 || '';
+      let pm = d.preview_mime || 'image/jpeg';
+      if (!pb && d.original_base64) {
+        const om = (d.mime || '').split(';')[0].trim().toLowerCase();
+        if (om.startsWith('image/')) {
+          pb = d.original_base64;
+          pm = om || 'image/jpeg';
+        }
+      }
+      const showPdfHint = !pb && (d.mime || '').toLowerCase().includes('pdf');
+      img.alt = pb
+        ? (d.filename || 'Vista previa')
+        : showPdfHint
+          ? 'PDF — si no ves imagen, completá el formulario o reenviá el archivo como JPG/PNG'
+          : 'Vista previa no disponible — revisá los datos del formulario';
+      img.src = pb ? `data:${pm};base64,${pb}` : '';
       zoom = 1.0; rot = 0; applyTransform();
 
       const root = document.getElementById('form-root');
@@ -250,8 +267,18 @@
           msg.className = 'mt-2 text-sm text-red-600';
           return;
         }
-        msg.textContent = data.message || 'Confirmado. Podés cerrar esta ventana.';
-        msg.className = 'mt-2 text-sm text-teal-700';
+        let line = data.message || 'Confirmado. Podés cerrar esta ventana.';
+        if (typeof data.flat_rows_count === 'number') {
+          line += ` Filas enviadas al webhook: ${data.flat_rows_count}.`;
+        }
+        if (data.persist_webhook === 'not_configured') {
+          msg.className = 'mt-2 text-sm text-amber-800';
+        } else if (data.persist_webhook === 'error') {
+          msg.className = 'mt-2 text-sm text-amber-800';
+        } else {
+          msg.className = 'mt-2 text-sm text-teal-700';
+        }
+        msg.textContent = line;
         document.getElementById('btn-finalize').disabled = true;
       } catch (e) {
         msg.textContent = 'Error de red: ' + e.message;

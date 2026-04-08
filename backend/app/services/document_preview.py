@@ -113,3 +113,11 @@ def preview_for_curation_ui(file_bytes: bytes, mime: str, filename: str) -> byte
             logger.warning("Preview como imagen falló (%s); se usa placeholder", filename)
 
     return placeholder_preview_jpeg_bytes()
+
+
+def preview_bytes_or_placeholder(file_bytes: bytes, mime: str, filename: str) -> bytes:
+    """Vista previa JPEG para pending: nunca devuelve buffer vacío."""
+    raw = preview_for_curation_ui(file_bytes, mime, filename)
+    if len(raw) < 32:
+        return placeholder_preview_jpeg_bytes()
+    return raw
