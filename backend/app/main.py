@@ -316,9 +316,9 @@ async def curation_page(request: Request, task_id: str, t: str = "", i: int = 0)
     idx = max(0, min(int(i or 0), len(docs) - 1))
 
     return templates.TemplateResponse(
+        request,
         "curation.html",
         {
-            "request": request,
             "task_id": task_id,
             "token": t,
             "batch_id": pending.get("batch_id", ""),
