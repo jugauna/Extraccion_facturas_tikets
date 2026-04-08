@@ -134,7 +134,9 @@
       }
 
       const img = document.getElementById('doc-img');
-      img.src = `data:${d.preview_mime || 'image/jpeg'};base64,${d.preview_base64 || ''}`;
+      const pb = d.preview_base64 || '';
+      img.alt = pb ? (d.filename || 'Vista previa') : 'Vista previa no disponible — revisá los datos del formulario';
+      img.src = pb ? `data:${d.preview_mime || 'image/jpeg'};base64,${pb}` : '';
       zoom = 1.0; rot = 0; applyTransform();
 
       const root = document.getElementById('form-root');

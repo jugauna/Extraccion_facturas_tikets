@@ -36,3 +36,36 @@ def make_preview_jpeg_bytes(file_bytes: bytes, mime: str, filename: str) -> byte
     out = buf.getvalue()
     logger.info("Preview JPEG %s bytes (orig mime=%s)", len(out), mime)
     return out
+
+
+def placeholder_preview_jpeg_bytes() -> bytes:
+    """Imagen mínima para la UI si no se puede renderizar el comprobante."""
+    im = Image.new("RGB", (320, 120), (241, 245, 249))
+    buf = BytesIO()
+    im.save(buf, format="JPEG", quality=75, optimize=True)
+    return buf.getvalue()
+
+
+def preview_for_curation_ui(file_bytes: bytes, mime: str, filename: str) -> bytes:
+    """
+    JPEG para la pantalla de curación: preview normal, o imagen sin PDF/poppler,
+    o placeholder (nunca debe fallar: la sesión pending siempre tiene vista).
+    """
+    try:
+        return make_preview_jpeg_bytes(file_bytes, mime, filename)
+    except Exception:
+        logger.warning("Preview PDF/completo falló (%s); se prueba solo imagen o placeholder", filename)
+
+    m = (mime or "").split(";")[0].strip().lower()
+    if m.startswith("image/"):
+        try:
+            im = Image.open(BytesIO(file_bytes))
+            im = im.convert("RGB")
+            im.thumbnail((MAX_EDGE, MAX_EDGE), Image.Resampling.LANCZOS)
+            buf = BytesIO()
+            im.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=True)
+            return buf.getvalue()
+        except Exception:
+            logger.warning("Preview como imagen falló (%s); se usa placeholder", filename)
+
+    return placeholder_preview_jpeg_bytes()

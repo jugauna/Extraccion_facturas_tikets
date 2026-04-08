@@ -37,7 +37,7 @@ from app.services.curation_store import (
     save_pending_batch,
     verify_token,
 )
-from app.services.document_preview import make_preview_jpeg_bytes
+from app.services.document_preview import preview_for_curation_ui
 from app.services.ethics_rag import analyze_expense_text
 from app.services.extract_ticket import extract_ticket_from_bytes
 
@@ -489,22 +489,19 @@ async def process_batch(
                     sheets_rows=sheets,
                 ),
             )
-            try:
-                preview = make_preview_jpeg_bytes(data, mime, name)
-                pending_docs.append(
-                    {
-                        "index": index,
-                        "filename": name,
-                        "mime": mime,
-                        "preview_mime": "image/jpeg",
-                        "preview_base64": base64.standard_b64encode(preview).decode("ascii"),
-                        "original_base64": base64.standard_b64encode(data).decode("ascii"),
-                        "drive_web_view_link": drive_by_index.get(index, ""),
-                        "rows": sheets,
-                    }
-                )
-            except Exception as cur_exc:
-                logger.warning("Preview/pending no generado para %s: %s", name, cur_exc)
+            preview = preview_for_curation_ui(data, mime, name)
+            pending_docs.append(
+                {
+                    "index": index,
+                    "filename": name,
+                    "mime": mime,
+                    "preview_mime": "image/jpeg",
+                    "preview_base64": base64.standard_b64encode(preview).decode("ascii"),
+                    "original_base64": base64.standard_b64encode(data).decode("ascii"),
+                    "drive_web_view_link": drive_by_index.get(index, ""),
+                    "rows": sheets,
+                }
+            )
 
         except ValueError as e:
             logger.warning("Extracción inválida index=%s: %s", index, e)
