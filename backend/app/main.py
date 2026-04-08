@@ -8,9 +8,9 @@ import traceback
 import urllib.request
 import uuid
 from pathlib import Path
-from typing import Annotated, List, Optional
+from typing import Annotated, Optional
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -305,19 +305,33 @@ async def ethics_rag(
     },
 )
 async def process_batch(
+    request: Request,
     _: Annotated[None, Depends(require_autodoc_secret)],
-    # Form antes que File (requisito FastAPI / Starlette con multipart; si no, 422 al mezclar con n8n).
-    user_notes: Annotated[Optional[str], Form(description="Notas opcionales del usuario sobre el lote")] = None,
-    batch_id: Annotated[Optional[str], Form()] = None,
-    drive_links_json: Annotated[
-        Optional[str],
-        Form(description="JSON array de enlaces Drive, mismo orden que images"),
-    ] = None,
-    images: Annotated[
-        List[UploadFile],
-        File(description="Uno o más archivos: imágenes (tickets) y/o PDFs"),
-    ] = [],
 ) -> ProcessBatchResponse | JSONResponse:
+    # Multipart parseado aquí (no solo FastAPI File/Form): n8n arma el body con Buffer y el
+    # binding List[UploadFile]=File() a veces dejaba images=[] → 400 "Enviá al menos un archivo".
+    form = await request.form()
+    user_notes = form.get("user_notes")
+    if isinstance(user_notes, UploadFile):
+        user_notes = None
+    elif user_notes is not None:
+        user_notes = str(user_notes)
+
+    batch_id = form.get("batch_id")
+    if isinstance(batch_id, UploadFile):
+        batch_id = None
+    elif batch_id is not None:
+        batch_id = str(batch_id)
+
+    drive_links_json = form.get("drive_links_json")
+    if isinstance(drive_links_json, UploadFile):
+        drive_links_json = None
+    elif drive_links_json is not None:
+        drive_links_json = str(drive_links_json)
+
+    raw_files = form.getlist("images")
+    images: list[UploadFile] = [f for f in raw_files if isinstance(f, UploadFile)]
+
     if not images:
         return JSONResponse(
             status_code=400,

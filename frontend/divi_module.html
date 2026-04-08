@@ -2,14 +2,11 @@
   Autodoc v2 — Módulo Código Divi (WordPress)
   FormData: "images" (repetido), "user_notes" y "batch_id" opcionales.
 
-  Si ves "Failed to fetch" = CORS: el navegador exige que n8n permita tu dominio.
-  En el servidor n8n (Docker / panel Hostinger) agregá variable de entorno, por ejemplo:
-    N8N_CORS_ALLOW_ORIGIN=https://TU-SITIO-WORDPRESS.com
-  Para pruebas rápidas (menos seguro): N8N_CORS_ALLOW_ORIGIN=*
-  Reiniciá n8n después de cambiar .env.
+  Si ves "Failed to fetch": a) el flujo en n8n debe estar ACTIVO (si no, el webhook /webhook/... no existe); b) CORS:
+  N8N_CORS_ALLOW_ORIGIN=https://TU-SITIO-WORDPRESS.com (o * solo para pruebas). Reiniciá n8n tras cambiar .env.
 
-  webhook-test = pruebas en el editor. En producción con flujo ACTIVO usá:
-  https://n8n.srv1392353.hstgr.cloud/webhook/autodoc-multi-ticket
+  Modo testing: AUTODOC_TESTING = true → /webhook-test/... (en n8n, pestaña del Webhook en “Listen for test event”).
+  Producción: AUTODOC_TESTING = false → /webhook/... y flujo ACTIVO.
 -->
 <div id="autodoc-rendiciones" class="autodoc-wrap">
   <form id="autodoc_form" class="autodoc-form">
@@ -51,7 +48,10 @@
 
 <script>
 (function () {
-  const N8N_WEBHOOK_URL = 'https://n8n.srv1392353.hstgr.cloud/webhook/autodoc-multi-ticket';
+  const AUTODOC_TESTING = true;
+  const N8N_WEBHOOK_URL = AUTODOC_TESTING
+    ? 'https://n8n.srv1392353.hstgr.cloud/webhook-test/autodoc-multi-ticket'
+    : 'https://n8n.srv1392353.hstgr.cloud/webhook/autodoc-multi-ticket';
 
   const form = document.getElementById('autodoc_form');
   const input = document.getElementById('ticket_files');
@@ -137,8 +137,9 @@
       if (err.name === 'AbortError') {
         setStatus('Solicitud cancelada.', 'error');
       } else if (String(err.message || '').indexOf('fetch') !== -1) {
+        var wpOrigin = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : 'https://TU-DOMINIO-WP';
         setStatus(
-          'No se pudo contactar a n8n (red o CORS). En el servidor n8n definí N8N_CORS_ALLOW_ORIGIN con la URL exacta de este sitio (o * para probar) y reiniciá el servicio. Revisá también F12 → Consola / Red.',
+          'No se pudo completar la petición a n8n. Lo más frecuente: 1) En n8n, activá el flujo del webhook (interruptor “Active” arriba a la derecha). Sin eso la URL de producción no existe y el navegador suele mostrar “Failed to fetch”. 2) CORS: N8N_CORS_ALLOW_ORIGIN=' + wpOrigin + ' (o * solo para pruebas) y reiniciá n8n. En F12 → Red: 404 “webhook is not registered” = flujo inactivo o path distinto.',
           'error'
         );
       } else {
