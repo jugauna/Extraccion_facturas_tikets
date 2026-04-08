@@ -235,12 +235,27 @@ async def curation_submit(body: CurationSubmitRequest) -> dict:
     # Notificar a n8n (persistencia final) si está configurado.
     settings = get_settings()
     if settings.persist_webhook_url.strip():
+        # También enviamos filas "planas" para facilitar el append en Sheets.
+        flat_rows: list[dict] = []
+        for d in gold_docs:
+            for row in d.get("rows") or []:
+                if isinstance(row, dict):
+                    flat_rows.append(
+                        {
+                            **row,
+                            "Batch_Id": str(pending.get("batch_id", "")),
+                            "Source_File": d.get("filename", ""),
+                            "Doc_Index": d.get("index", 0),
+                        }
+                    )
+
         payload = {
             "task_id": body.task_id,
             "batch_id": str(pending.get("batch_id", "")),
             "user_notes": str(pending.get("user_notes", "")),
             "gold_path": str(gold_path.name),
             "docs": gold_docs,
+            "flat_rows": flat_rows,
         }
         try:
             req = urllib.request.Request(

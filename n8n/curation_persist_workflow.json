@@ -1,0 +1,193 @@
+{
+  "name": "Autodoc v2 — Persistencia post-curación (Drive + Sheets + Email)",
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "meta": { "instanceId": "autodoc-v2-persist" },
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "autodoc-curation-submit",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "wh-persist",
+      "name": "Webhook_CurationSubmit",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-780, 260],
+      "webhookId": "autodoc-curation-submit"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fld",
+              "name": "drive_folder_id",
+              "type": "string",
+              "value": "PEGAR_ID_CARPETA_RENDICIONES_APROBADAS"
+            },
+            {
+              "id": "sid",
+              "name": "google_sheet_id",
+              "type": "string",
+              "value": "PEGAR_ID_DEL_GOOGLE_SHEET"
+            },
+            {
+              "id": "mail",
+              "name": "notify_email",
+              "type": "string",
+              "value": "tu-email@ejemplo.com"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-cfg",
+      "name": "Set_Config_Persistencia",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-560, 260],
+      "notesInFlow": true,
+      "notes": "Config provisoria. En prod reemplazar values por expresiones {{ $env... }}. Requiere credenciales Drive/Sheets/Gmail."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $('Webhook_CurationSubmit').first().json;\nconst cfg = $('Set_Config_Persistencia').first().json;\nconst batch_id = String(item.batch_id || '');\nconst user_notes = String(item.user_notes || '');\nconst docs = Array.isArray(item.docs) ? item.docs : [];\nif (!docs.length) throw new Error('docs vacío');\n\nreturn docs.map((d, idx) => {\n  const b64 = String(d.original_base64 || '');\n  if (!b64) throw new Error(`docs[${idx}].original_base64 vacío`);\n  const filename = String(d.filename || `doc_${idx}.bin`);\n  const mime = String(d.mime || 'application/octet-stream');\n  const rows = Array.isArray(d.rows) ? d.rows : [];\n  return {\n    json: {\n      batch_id,\n      user_notes,\n      doc_index: idx,\n      filename,\n      mime,\n      rows,\n      drive_folder_id: cfg.drive_folder_id,\n      google_sheet_id: cfg.google_sheet_id,\n      notify_email: cfg.notify_email,\n    },\n    binary: {\n      image: {\n        data: b64,\n        fileName: filename,\n        mimeType: mime,\n      },\n    },\n  };\n});"
+      },
+      "id": "code-split",
+      "name": "Code_Split_Docs_To_Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-340, 260],
+      "notesInFlow": true,
+      "notes": "Convierte docs[*] (base64) a items con binary.image para subir a Drive y luego append a Sheets."
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "inputDataFieldName": "image",
+        "name": "={{ $json.filename }}",
+        "parents": "={{ $json.drive_folder_id }}",
+        "options": {}
+      },
+      "id": "drive-up",
+      "name": "GoogleDrive_Upload_Aprobadas",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [-120, 260],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REPLACE_DRIVE_CRED",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const up = $json;\nconst driveId = up.id;\nconst driveLink = up.webViewLink || up.webContentLink || '';\nconst filename = String($('Code_Split_Docs_To_Items').item.json.filename || '');\nconst batch_id = String($('Code_Split_Docs_To_Items').item.json.batch_id || '');\nconst rows = $('Code_Split_Docs_To_Items').item.json.rows || [];\nconst out = [];\n\nfor (const row of rows) {\n  out.push({\n    json: {\n      ...row,\n      Batch_Id: batch_id,\n      Source_File: filename,\n      Drive_File_Id: driveId,\n      Drive_Link: driveLink,\n    },\n  });\n}\n\nreturn out.length ? out : [{ json: { Batch_Id: batch_id, Source_File: filename, Drive_File_Id: driveId, Drive_Link: driveLink, Note: 'sin filas' } }];"
+      },
+      "id": "code-expand",
+      "name": "Code_Expand_Rows_For_Sheets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [120, 260]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Set_Config_Persistencia').first().json.google_sheet_id }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Rendiciones"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "gsheet",
+      "name": "GoogleSheets_Append_Rendiciones",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [360, 260],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_SHEETS_CRED",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const root = $('Webhook_CurationSubmit').first().json;\nconst batch_id = String(root.batch_id || '');\nconst docCount = Array.isArray(root.docs) ? root.docs.length : 0;\nconst rowsCount = Array.isArray(root.flat_rows) ? root.flat_rows.length : $input.all().length;\nreturn [{ json: { batch_id, doc_count: docCount, rows_count: rowsCount } }];"
+      },
+      "id": "code-summary",
+      "name": "Code_Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 260]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $('Set_Config_Persistencia').first().json.notify_email }}",
+        "subject": "=Rendición procesada — Batch {{ $('Code_Summary').first().json.batch_id }}",
+        "emailType": "html",
+        "message": "=<html><body style=\"font-family:system-ui,sans-serif;max-width:640px\"><h2>Rendición procesada con éxito</h2><p><strong>Batch ID:</strong> {{ $('Code_Summary').first().json.batch_id }}</p><p><strong>Documentos:</strong> {{ $('Code_Summary').first().json.doc_count }}</p><p><strong>Filas guardadas:</strong> {{ $('Code_Summary').first().json.rows_count }}</p><p>Se subieron los archivos a Drive (Rendiciones Aprobadas) y se agregaron filas en Google Sheets.</p></body></html>",
+        "options": {}
+      },
+      "id": "gmail",
+      "name": "Gmail_Email_Resumen",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [840, 260],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_GMAIL_CRED",
+          "name": "Gmail OAuth2"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook_CurationSubmit": {
+      "main": [[{ "node": "Set_Config_Persistencia", "type": "main", "index": 0 }]]
+    },
+    "Set_Config_Persistencia": {
+      "main": [[{ "node": "Code_Split_Docs_To_Items", "type": "main", "index": 0 }]]
+    },
+    "Code_Split_Docs_To_Items": {
+      "main": [[{ "node": "GoogleDrive_Upload_Aprobadas", "type": "main", "index": 0 }]]
+    },
+    "GoogleDrive_Upload_Aprobadas": {
+      "main": [[{ "node": "Code_Expand_Rows_For_Sheets", "type": "main", "index": 0 }]]
+    },
+    "Code_Expand_Rows_For_Sheets": {
+      "main": [[{ "node": "GoogleSheets_Append_Rendiciones", "type": "main", "index": 0 }]]
+    },
+    "GoogleSheets_Append_Rendiciones": {
+      "main": [[{ "node": "Code_Summary", "type": "main", "index": 0 }]]
+    },
+    "Code_Summary": {
+      "main": [[{ "node": "Gmail_Email_Resumen", "type": "main", "index": 0 }]]
+    }
+  }
+}
+
