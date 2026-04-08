@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     persist_webhook_url: str = ""
     # Secreto opcional para el webhook de persistencia (header X-Autodoc-Secret)
     persist_webhook_secret: str = ""
+    # Si true: /process-batch solo acepta PDF (firma %PDF-). Imágenes JPG/PNG rechazadas hasta que lo desactives.
+    process_batch_pdf_only: bool = False
 
     def cors_origin_list(self) -> list[str]:
         raw = (self.cors_origins or "").strip()

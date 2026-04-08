@@ -43,6 +43,7 @@ from app.services.curation_store import (
 from app.services.document_preview import preview_bytes_or_placeholder
 from app.services.ethics_rag import analyze_expense_text
 from app.services.extract_ticket import extract_ticket_from_bytes
+from app.services.media_sniff import early_reject_wrong_payload, trim_leading_pdf
 
 logging.basicConfig(
     level=logging.INFO,
@@ -549,6 +550,7 @@ async def process_batch(
     bid = (batch_id or "").strip() or str(uuid.uuid4())
     notes = (user_notes or "").strip()
     drive_by_index = _parse_drive_links(drive_links_json)
+    settings_batch = get_settings()
     logger.info("process-batch batch_id=%s files=%s user_notes_len=%s", bid, len(images), len(notes))
 
     results: list[TicketProcessResult] = []
@@ -586,6 +588,38 @@ async def process_batch(
         mime = _mime_from_upload(upload)
         if not mime.startswith("image/") and mime != "application/pdf":
             logger.warning("Tipo inusual index=%s mime=%s", index, mime)
+
+        rej = early_reject_wrong_payload(data)
+        if rej:
+            results.append(
+                TicketProcessResult(
+                    filename=name,
+                    index=index,
+                    success=False,
+                    error="invalid_payload",
+                    detail=rej,
+                ),
+            )
+            continue
+
+        if settings_batch.process_batch_pdf_only:
+            pdf_blob = trim_leading_pdf(data)
+            if pdf_blob is None and mime == "application/pdf":
+                pdf_blob = data
+            if pdf_blob is None or len(pdf_blob) < 9 or not pdf_blob.startswith(b"%PDF-"):
+                results.append(
+                    TicketProcessResult(
+                        filename=name,
+                        index=index,
+                        success=False,
+                        error="pdf_only",
+                        detail=(
+                            "Este servicio está en modo solo-PDF (PROCESS_BATCH_PDF_ONLY). "
+                            "Subí un PDF o desactivá esa variable en Cloud Run para aceptar JPG/PNG."
+                        ),
+                    ),
+                )
+                continue
 
         try:
             rows, _raw = extract_ticket_from_bytes(data, mime, name, notes)

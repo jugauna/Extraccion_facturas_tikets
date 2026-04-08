@@ -68,7 +68,9 @@
       "name": "Code_Sync_ReturnCurationUrl",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-800, 260]
+      "position": [-800, 260],
+      "notesInFlow": true,
+      "notes": "El Buffer del multipart debe ser el archivo real (PDF o imagen) desde getBinaryDataBuffer / binary.data. Si enviás un número u otro campo JSON como archivo, Cloud Run rechaza con invalid_payload. PDF recomendado; opción PROCESS_BATCH_PDF_ONLY en Cloud Run."
     },
     {
       "parameters": {

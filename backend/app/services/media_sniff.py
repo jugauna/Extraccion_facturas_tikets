@@ -25,6 +25,59 @@ def trim_leading_pdf(data: bytes, search_limit: int = 65536) -> bytes | None:
     return None
 
 
+def looks_like_real_file_bytes(data: bytes) -> bool:
+    """True si los primeros bytes coinciden con PDF, JPEG, PNG, GIF, WebP o contenedor HEIC/AVIF (ftyp)."""
+    if not data or len(data) < 3:
+        return False
+    if trim_leading_pdf(data) is not None:
+        return True
+    if data[:3] == b"\xff\xd8\xff" or data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return True
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return True
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return True
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        return True
+    return False
+
+
+def early_reject_wrong_payload(data: bytes) -> str | None:
+    """
+    Rechazo antes de extracción: típico error n8n (ID numérico o texto en vez del binario del archivo).
+    Si devuelve str, no intentar OpenAI ni curación con ese cuerpo.
+    """
+    if not data:
+        return "Archivo vacío."
+    if looks_like_real_file_bytes(data):
+        return None
+    n = len(data)
+    if n <= 2048:
+        try:
+            t = data.decode("ascii", errors="strict").strip()
+        except UnicodeDecodeError:
+            t = ""
+        if t and len(t) == n and n <= 512 and t.isdigit():
+            return (
+                "Se recibió solo un número en texto (no el archivo binario). "
+                "En n8n: usá getBinaryDataBuffer / item.binary.image en el multipart, "
+                f"no un campo del JSON. Valor recibido: «{t[:48]}»."
+            )
+        if t and len(t) == n and n <= 256:
+            if all(32 <= ord(c) <= 126 or c in "\r\n\t" for c in t) and not t.startswith(
+                ("{", "[", "<", "%"),
+            ):
+                dr = sum(c.isdigit() for c in t) / len(t)
+                if dr >= 0.85:
+                    return (
+                        "Cuerpo solo texto/dígitos, sin firma de imagen ni PDF. "
+                        + binary_format_hint(data)
+                    )
+    if n < 24:
+        return "Demasiado corto para ser un comprobante. " + binary_format_hint(data)
+    return None
+
+
 def binary_format_hint(data: bytes) -> str:
     """Pista corta para mensajes de error (no incluye datos sensibles)."""
     if not data:
