@@ -1,5 +1,5 @@
 {
-  "name": "Autodoc v2 — Persistencia post-curación (Drive + Sheets + Email)",
+  "name": "Autodoc v2 — Persistencia post-curación (Drive + Sheets + mail Jefe Contable)",
   "active": false,
   "settings": { "executionOrder": "v1" },
   "meta": { "instanceId": "autodoc-v2-persist" },
@@ -36,9 +36,9 @@
             },
             {
               "id": "mail",
-              "name": "notify_email",
+              "name": "jefe_contable_email",
               "type": "string",
-              "value": "tu-email@ejemplo.com"
+              "value": "EMAIL_DEL_JEFE_DE_CONTABLE@empresa.com"
             }
           ]
         },
@@ -50,12 +50,12 @@
       "typeVersion": 3.4,
       "position": [-560, 260],
       "notesInFlow": true,
-      "notes": "Config provisoria. En prod reemplazar values por expresiones {{ $env... }}. Requiere credenciales Drive/Sheets/Gmail."
+      "notes": "drive_folder_id, google_sheet_id, jefe_contable_email. Tras Confirmar en la UI de curación, Cloud Run POSTea aquí: se sube a Drive, se append a hoja Rendiciones y se avisa al Jefe de Contable."
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const item = $('Webhook_CurationSubmit').first().json;\nconst cfg = $('Set_Config_Persistencia').first().json;\nconst batch_id = String(item.batch_id || '');\nconst user_notes = String(item.user_notes || '');\nconst docs = Array.isArray(item.docs) ? item.docs : [];\nif (!docs.length) throw new Error('docs vacío');\n\nreturn docs.map((d, idx) => {\n  const b64 = String(d.original_base64 || '');\n  if (!b64) throw new Error(`docs[${idx}].original_base64 vacío`);\n  const filename = String(d.filename || `doc_${idx}.bin`);\n  const mime = String(d.mime || 'application/octet-stream');\n  const rows = Array.isArray(d.rows) ? d.rows : [];\n  return {\n    json: {\n      batch_id,\n      user_notes,\n      doc_index: idx,\n      filename,\n      mime,\n      rows,\n      drive_folder_id: cfg.drive_folder_id,\n      google_sheet_id: cfg.google_sheet_id,\n      notify_email: cfg.notify_email,\n    },\n    binary: {\n      image: {\n        data: b64,\n        fileName: filename,\n        mimeType: mime,\n      },\n    },\n  };\n});"
+        "jsCode": "const item = $('Webhook_CurationSubmit').first().json;\nconst cfg = $('Set_Config_Persistencia').first().json;\nconst batch_id = String(item.batch_id || '');\nconst user_notes = String(item.user_notes || '');\nconst docs = Array.isArray(item.docs) ? item.docs : [];\nif (!docs.length) throw new Error('docs vacío');\n\nreturn docs.map((d, idx) => {\n  const b64 = String(d.original_base64 || '');\n  if (!b64) throw new Error(`docs[${idx}].original_base64 vacío`);\n  const filename = String(d.filename || `doc_${idx}.bin`);\n  const mime = String(d.mime || 'application/octet-stream');\n  const rows = Array.isArray(d.rows) ? d.rows : [];\n  return {\n    json: {\n      batch_id,\n      user_notes,\n      doc_index: idx,\n      filename,\n      mime,\n      rows,\n      drive_folder_id: cfg.drive_folder_id,\n      google_sheet_id: cfg.google_sheet_id,\n    },\n    binary: {\n      image: {\n        data: b64,\n        fileName: filename,\n        mimeType: mime,\n      },\n    },\n  };\n});"
       },
       "id": "code-split",
       "name": "Code_Split_Docs_To_Items",
@@ -135,7 +135,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const root = $('Webhook_CurationSubmit').first().json;\nconst batch_id = String(root.batch_id || '');\nconst docCount = Array.isArray(root.docs) ? root.docs.length : 0;\nconst rowsCount = Array.isArray(root.flat_rows) ? root.flat_rows.length : $input.all().length;\nreturn [{ json: { batch_id, doc_count: docCount, rows_count: rowsCount } }];"
+        "jsCode": "const root = $('Webhook_CurationSubmit').first().json;\nconst batch_id = String(root.batch_id || '');\nconst task_id = String(root.task_id || '');\nconst user_notes = String(root.user_notes || '').trim();\nconst docCount = Array.isArray(root.docs) ? root.docs.length : 0;\nconst flat = Array.isArray(root.flat_rows) ? root.flat_rows : [];\nconst rowsCount = flat.length || $input.all().length;\n\nfunction esc(s) {\n  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nconst cols = ['Comprobante', 'Nombre', 'Detalle', 'Precio', 'F.Emision'];\nconst slice = flat.slice(0, 10);\nlet tableHtml = '';\nif (slice.length) {\n  const head = '<tr>' + cols.map((c) => '<th style=\"text-align:left;padding:6px;border:1px solid #ccc\">' + esc(c) + '</th>').join('') + '</tr>';\n  const body = slice.map((r) => '<tr>' + cols.map((c) => '<td style=\"padding:6px;border:1px solid #eee\">' + esc((r[c] ?? '').toString().slice(0, 120)) + '</td>').join('') + '</tr>').join('');\n  tableHtml = '<table style=\"border-collapse:collapse;margin-top:12px;font-size:13px\">' + head + body + '</table>';\n} else {\n  tableHtml = '<p><em>No hubo flat_rows en el payload; revisá el nodo Sheets.</em></p>';\n}\n\nconst email_html = '<html><body style=\"font-family:system-ui,sans-serif;max-width:720px;line-height:1.5\">' +\n  '<h2 style=\"color:#0f172a\">Rendiciones — lote confirmado en curación</h2>' +\n  '<p>Estimado/a: se completó la <strong>validación humana</strong> de la extracción y se ejecutaron las acciones siguientes:</p>' +\n  '<ul>' +\n  '<li><strong>Archivos</strong> guardados en Google Drive (carpeta Rendiciones aprobadas).</li>' +\n  '<li><strong>Datos contables</strong> agregados en Google Sheets, hoja <strong>Rendiciones</strong> (' + rowsCount + ' fila(s)).</li>' +\n  '<li><strong>Documentos</strong> en el lote: ' + docCount + '.</li>' +\n  '</ul>' +\n  '<p><strong>Batch ID:</strong> ' + esc(batch_id) + '<br/>' +\n  '<strong>ID tarea:</strong> ' + esc(task_id) + '</p>' +\n  (user_notes ? '<p><strong>Notas del envío:</strong> ' + esc(user_notes) + '</p>' : '') +\n  '<h3 style=\"margin-top:20px\">Vista rápida de líneas registradas</h3>' + tableHtml +\n  (flat.length > 10 ? '<p style=\"color:#64748b;font-size:13px\">…y más filas en la planilla.</p>' : '') +\n  '<p style=\"margin-top:24px;color:#64748b;font-size:12px\">Mensaje automático (Autodoc v2).</p>' +\n  '</body></html>';\n\nreturn [{ json: { batch_id, task_id, doc_count: docCount, rows_count: rowsCount, email_html } }];"
       },
       "id": "code-summary",
       "name": "Code_Summary",
@@ -147,10 +147,10 @@
       "parameters": {
         "resource": "message",
         "operation": "send",
-        "sendTo": "={{ $('Set_Config_Persistencia').first().json.notify_email }}",
-        "subject": "=Rendición procesada — Batch {{ $('Code_Summary').first().json.batch_id }}",
+        "sendTo": "={{ $('Set_Config_Persistencia').first().json.jefe_contable_email }}",
+        "subject": "=Autodoc — Rendiciones confirmadas | Batch {{ $json.batch_id }}",
         "emailType": "html",
-        "message": "=<html><body style=\"font-family:system-ui,sans-serif;max-width:640px\"><h2>Rendición procesada con éxito</h2><p><strong>Batch ID:</strong> {{ $('Code_Summary').first().json.batch_id }}</p><p><strong>Documentos:</strong> {{ $('Code_Summary').first().json.doc_count }}</p><p><strong>Filas guardadas:</strong> {{ $('Code_Summary').first().json.rows_count }}</p><p>Se subieron los archivos a Drive (Rendiciones Aprobadas) y se agregaron filas en Google Sheets.</p></body></html>",
+        "message": "={{ $json.email_html }}",
         "options": {}
       },
       "id": "gmail",

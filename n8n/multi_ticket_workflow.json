@@ -72,7 +72,7 @@
     },
     {
       "parameters": {
-        "content": "## Sync → Curación (solo lectura / extracción)\n- El webhook responde `curation_url` (último nodo).\n- **No** hay ética RAG ni escritura a Sheets aquí.\n- Tras validar en el UI, el backend puede llamar al flujo de persistencia n8n.\n",
+        "content": "## Sync → Curación\n- Webhook responde `curation_url`. Tras **Confirmar** en la UI, Cloud Run llama a `PERSIST_WEBHOOK_URL` (flujo **Persistencia**: Drive + hoja Rendiciones + e-mail al Jefe de Contable).\n",
         "height": 220,
         "width": 400,
         "color": 4
