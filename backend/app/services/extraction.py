@@ -10,6 +10,7 @@ from openai import OpenAI
 
 from app.config import get_settings
 from app.schemas import AccountingRow
+from app.services.few_shot import build_few_shot_addon
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ def extract_accounting_rows(image_bytes: bytes, mime: str, user_notes: str) -> T
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY no configurada")
 
-    system_prompt = _load_system_prompt()
+    system_prompt = _load_system_prompt() + build_few_shot_addon()
     client = OpenAI(api_key=settings.openai_api_key)
     messages = [
         {"role": "system", "content": system_prompt},

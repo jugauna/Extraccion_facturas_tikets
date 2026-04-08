@@ -20,8 +20,48 @@
     },
     {
       "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "crb",
+              "name": "cloud_run_base",
+              "type": "string",
+              "value": "https://extraccion-facturas-tikets-816080222172.southamerica-east1.run.app"
+            },
+            {
+              "id": "sec",
+              "name": "x_autodoc_secret",
+              "type": "string",
+              "value": "CAMBIAR_MISMO_VALOR_QUE_AUTODOC_SECRET_EN_CLOUD_RUN"
+            },
+            {
+              "id": "gs",
+              "name": "google_sheet_id",
+              "type": "string",
+              "value": "PEGAR_ID_DEL_GOOGLE_SHEET"
+            },
+            {
+              "id": "mail",
+              "name": "hitl_approver_email",
+              "type": "string",
+              "value": "tu-email@ejemplo.com"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-runtime-cfg",
+      "name": "Set_Config_Provisorio",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-1350, 260],
+      "notesInFlow": true,
+      "notes": "Único lugar para config provisoria: agregar campos con Add Field. Llegan a cada ítem (SplitOut hace spread). En otros nodos: $json.mi_campo o $('Set_Config_Provisorio').first().json.mi_campo. Producción: $env en estos valores."
+    },
+    {
+      "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const item = $input.first();\nconst body = item.json.body || item.json;\nconst b = item.binary || {};\nconst keys = Object.keys(b);\nif (!keys.length) {\n  throw new Error('No hay archivos binarios. Enviá multipart con el campo \"images\" (uno o más).');\n}\nconst user_notes = body.user_notes || body.notes || '';\nconst batch_id = body.batch_id || $execution.id;\nreturn keys.map((key, index) => ({\n  json: {\n    batch_id,\n    user_notes: String(user_notes),\n    filename: b[key].fileName || `ticket_${index}.jpg`,\n    binaryKey: key,\n  },\n  binary: { image: b[key] },\n}));"
+        "jsCode": "const wb = $('Webhook_Multipart').first();\nconst body = wb.json.body || wb.json;\nconst full = $('Set_Config_Provisorio').first().json || {};\nconst skip = new Set(['headers', 'params', 'query', 'body', 'webhookUrl', 'executionMode']);\nconst cfg = {};\nfor (const [k, v] of Object.entries(full)) {\n  if (!skip.has(k)) cfg[k] = v;\n}\nconst b = wb.binary || {};\nconst keys = Object.keys(b);\nif (!keys.length) {\n  throw new Error('No hay archivos binarios. El nodo Set no reenvía binario: se lee de Webhook_Multipart. Enviá multipart con el campo \"images\" (uno o más) o ejecutá desde el webhook con archivo.');\n}\nconst user_notes = body.user_notes || body.notes || '';\nconst batch_id = body.batch_id || $execution.id;\nreturn keys.map((key, index) => ({\n  json: {\n    ...cfg,\n    batch_id,\n    user_notes: String(user_notes),\n    filename: b[key].fileName || `ticket_${index}.jpg`,\n    binaryKey: key,\n  },\n  binary: { image: b[key] },\n}));"
       },
       "id": "code-split-items",
       "name": "SplitOut_UnItemPorImagen",
@@ -29,7 +69,7 @@
       "typeVersion": 2,
       "position": [-1240, 260],
       "notesInFlow": true,
-      "notes": "Sustituye un ‘Split Out’ sobre binarios: expande el webhook en N ítems (1 imagen = 1 ítem) para Drive, Sheets y batch."
+      "notes": "Binario desde Webhook_Multipart (el Set pierde binarios). Config desde Set_Config_Provisorio. N ítems = N archivos."
     },
     {
       "parameters": {
@@ -54,13 +94,26 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const orig = $('SplitOut_UnItemPorImagen').all();\nconst uploaded = $input.all();\nif (!orig.length) throw new Error('No hay ítems originales');\nif (uploaded.length !== orig.length) {\n  throw new Error(`Drive devolvió ${uploaded.length} ítems, se esperaban ${orig.length}`);\n}\n\nconst drive_items = uploaded.map((u, idx) => {\n  const j = u.json || {};\n  return {\n    index: idx,\n    drive_id: j.id,\n    drive_web_view_link: j.webViewLink || j.webContentLink || '',\n    filename: orig[idx]?.json?.filename,\n  };\n});\n\nfunction mpField(boundary, name, value) {\n  const head = Buffer.from(\n    `--${boundary}\\r\\nContent-Disposition: form-data; name=\"${name}\"\\r\\n\\r\\n`,\n    'utf-8',\n  );\n  return Buffer.concat([head, Buffer.from(String(value), 'utf-8'), Buffer.from('\\r\\n', 'utf-8')]);\n}\n\nfunction mpFilePart(boundary, fieldName, filename, buf, mimeType) {\n  const safeName = String(filename).replace(/\"/g, '_');\n  const mime = mimeType || 'application/octet-stream';\n  const header = Buffer.from(\n    `--${boundary}\\r\\nContent-Disposition: form-data; name=\"${fieldName}\"; filename=\"${safeName}\"\\r\\nContent-Type: ${mime}\\r\\n\\r\\n`,\n    'utf-8',\n  );\n  return Buffer.concat([header, buf, Buffer.from('\\r\\n', 'utf-8')]);\n}\n\nconst batch_id = String(orig[0].json.batch_id || $execution.id);\nconst un = orig[0].json.user_notes || '';\nconst boundary = 'n8n_' + Math.random().toString(36).slice(2) + '_' + Date.now();\n\nconst parts = [];\nparts.push(mpField(boundary, 'batch_id', batch_id));\nif (un) parts.push(mpField(boundary, 'user_notes', String(un)));\n\nfor (let i = 0; i < orig.length; i++) {\n  const it = orig[i];\n  const bin = it.binary?.image;\n  let buf;\n  if (bin && bin.data) {\n    buf = Buffer.from(bin.data, 'base64');\n  } else if (this.helpers.getBinaryDataBuffer) {\n    buf = await this.helpers.getBinaryDataBuffer(i, 'image');\n  } else {\n    throw new Error('No se pudo leer el binario');\n  }\n  const fn = it.json.filename || `ticket_${i}.bin`;\n  const mime = bin?.mimeType || bin?.fileType || 'application/octet-stream';\n  parts.push(mpFilePart(boundary, 'images', fn, buf, mime));\n}\n\nparts.push(Buffer.from(`--${boundary}--\\r\\n`, 'utf-8'));\nconst body = Buffer.concat(parts);\n\nlet base = String($env.AUTODOC_CLOUD_RUN_URL || '').trim();\nwhile (base.endsWith('/')) base = base.slice(0, -1);\nif (!base) throw new Error('Variable AUTODOC_CLOUD_RUN_URL no definida');\nconst url = `${base}/process-batch`;\nconst secret = $env.X_AUTODOC_SECRET || '';\nif (!secret) throw new Error('Variable X_AUTODOC_SECRET no definida');\n\nlet lastErr;\nlet parsed;\nfor (let attempt = 1; attempt <= 3; attempt++) {\n  try {\n    const res = await this.helpers.httpRequest({\n      method: 'POST',\n      url,\n      headers: {\n        'Content-Type': `multipart/form-data; boundary=${boundary}`,\n        'X-Autodoc-Secret': secret,\n      },\n      body,\n      timeout: 180000,\n    });\n    parsed = typeof res === 'string' ? JSON.parse(res) : res;\n    lastErr = null;\n    break;\n  } catch (e) {\n    lastErr = e;\n    if (attempt < 3) await new Promise((r) => setTimeout(r, 2000 * attempt));\n  }\n}\nif (lastErr) throw lastErr;\n\nreturn [{\n  json: {\n    batch_http: parsed,\n    drive_items,\n    ticket_count: orig.length,\n  },\n}];"
+        "jsCode": "const orig = $('SplitOut_UnItemPorImagen').all();\nconst uploaded = $input.all();\nif (!orig.length) throw new Error('No hay ítems originales');\nif (uploaded.length !== orig.length) {\n  throw new Error(`Drive devolvió ${uploaded.length} ítems, se esperaban ${orig.length}`);\n}\n\nconst drive_items = uploaded.map((u, idx) => {\n  const j = u.json || {};\n  return {\n    index: idx,\n    drive_id: j.id,\n    drive_web_view_link: j.webViewLink || j.webContentLink || '',\n    filename: orig[idx]?.json?.filename,\n  };\n});\n\nfunction mpField(boundary, name, value) {\n  const head = Buffer.from(\n    `--${boundary}\\r\\nContent-Disposition: form-data; name=\"${name}\"\\r\\n\\r\\n`,\n    'utf-8',\n  );\n  return Buffer.concat([head, Buffer.from(String(value), 'utf-8'), Buffer.from('\\r\\n', 'utf-8')]);\n}\n\nfunction mpFilePart(boundary, fieldName, filename, buf, mimeType) {\n  const safeName = String(filename).replace(/\"/g, '_');\n  const mime = mimeType || 'application/octet-stream';\n  const header = Buffer.from(\n    `--${boundary}\\r\\nContent-Disposition: form-data; name=\"${fieldName}\"; filename=\"${safeName}\"\\r\\nContent-Type: ${mime}\\r\\n\\r\\n`,\n    'utf-8',\n  );\n  return Buffer.concat([header, buf, Buffer.from('\\r\\n', 'utf-8')]);\n}\n\nconst batch_id = String(orig[0].json.batch_id || $execution.id);\nconst un = orig[0].json.user_notes || '';\nconst boundary = 'n8n_' + Math.random().toString(36).slice(2) + '_' + Date.now();\n\nconst parts = [];\nparts.push(mpField(boundary, 'batch_id', batch_id));\nif (un) parts.push(mpField(boundary, 'user_notes', String(un)));\nparts.push(mpField(boundary, 'drive_links_json', JSON.stringify(drive_items.map((d) => String(d.drive_web_view_link || d.drive_webContentLink || '')))));\n\nfor (let i = 0; i < orig.length; i++) {\n  const it = orig[i];\n  const bin = it.binary?.image;\n  let buf;\n  if (bin && bin.data) {\n    buf = Buffer.from(bin.data, 'base64');\n  } else if (this.helpers.getBinaryDataBuffer) {\n    buf = await this.helpers.getBinaryDataBuffer(i, 'image');\n  } else {\n    throw new Error('No se pudo leer el binario');\n  }\n  const fn = it.json.filename || `ticket_${i}.bin`;\n  const mime = bin?.mimeType || bin?.fileType || 'application/octet-stream';\n  parts.push(mpFilePart(boundary, 'images', fn, buf, mime));\n}\n\nparts.push(Buffer.from(`--${boundary}--\\r\\n`, 'utf-8'));\nconst body = Buffer.concat(parts);\n\nlet base = String(orig[0].json.cloud_run_base || '').trim();\nwhile (base.endsWith('/')) base = base.slice(0, -1);\nif (!base) throw new Error('Falta cloud_run_base (nodo Set_Config_Provisorio)');\nconst url = `${base}/process-batch`;\nconst secret = String(orig[0].json.x_autodoc_secret || '');\nif (!secret) throw new Error('Falta x_autodoc_secret (nodo Set_Config_Provisorio)');\n\nlet lastErr;\nlet parsed;\nfor (let attempt = 1; attempt <= 3; attempt++) {\n  try {\n    const res = await this.helpers.httpRequest({\n      method: 'POST',\n      url,\n      headers: {\n        'Content-Type': `multipart/form-data; boundary=${boundary}`,\n        'X-Autodoc-Secret': secret,\n      },\n      body,\n      timeout: 180000,\n    });\n    parsed = typeof res === 'string' ? JSON.parse(res) : res;\n    lastErr = null;\n    break;\n  } catch (e) {\n    lastErr = e;\n    if (attempt < 3) await new Promise((r) => setTimeout(r, 2000 * attempt));\n  }\n}\nif (lastErr) throw lastErr;\n\nreturn [{\n  json: {\n    batch_http: parsed,\n    drive_items,\n    ticket_count: orig.length,\n  },\n}];"
       },
       "id": "code-batch",
       "name": "Code_CloudRun_ProcessBatch_3Retries",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [-800, 260]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const batch = $input.first().json;\nconst cfg = $('Set_Config_Provisorio').first().json;\nlet base = String(cfg.cloud_run_base || '').trim();\nwhile (base.endsWith('/')) base = base.slice(0, -1);\nconst secret = String(cfg.x_autodoc_secret || '');\nconst api = batch.batch_http;\nif (!api) throw new Error('batch_http ausente');\n\nconst detalles = [];\nfor (const r of api.results || []) {\n  if (!r.success || !r.sheets_rows || !r.sheets_rows.length) continue;\n  const row = r.sheets_rows[0];\n  const d = row.Detalle || row.detalle || '';\n  if (d) detalles.push(String(d));\n}\nconst combined = detalles.join(' | ').slice(0, 12000);\n\nlet ethics_report = { detalle_empty: true, needs_review: false, max_similarity: 0, threshold: 0, note: 'Sin detalles para comparar' };\ntry {\n  if (combined.trim()) {\n    const res = await this.helpers.httpRequest({\n      method: 'POST',\n      url: `${base}/ethics-rag`,\n      headers: {\n        'Content-Type': 'application/json',\n        'X-Autodoc-Secret': secret,\n      },\n      body: JSON.stringify({ detalle: combined }),\n      timeout: 120000,\n    });\n    ethics_report = typeof res === 'string' ? JSON.parse(res) : res;\n  }\n} catch (e) {\n  ethics_report = { needs_review: false, max_similarity: 0, ethics_error: String(e.message || e), note: 'Fallo llamada ethics-rag (se continúa el flujo)' };\n}\n\nreturn [{ json: { batch_http: api, drive_items: batch.drive_items, ticket_count: batch.ticket_count, ethics_report } }];"
+      },
+      "id": "code-ethics",
+      "name": "Code_Ethics_RAG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-670, 260],
+      "notesInFlow": true,
+      "notes": "POST /ethics-rag con Detalle agregado; requiere OPENAI_API_KEY en Cloud Run."
     },
     {
       "parameters": {
@@ -81,7 +134,7 @@
         "documentId": {
           "__rl": true,
           "mode": "id",
-          "value": "={{ $env.GOOGLE_SHEET_ID }}"
+          "value": "={{ $('Set_Config_Provisorio').first().json.google_sheet_id }}"
         },
         "sheetName": {
           "__rl": true,
@@ -122,30 +175,21 @@
     },
     {
       "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "html",
-              "name": "email_html",
-              "type": "string",
-              "value": "=<html><body style=\\\"font-family:system-ui\\\"><h2>Rendiciones — aprobación de lote</h2><p><strong>Tickets en el lote:</strong> {{ $('Code_CloudRun_ProcessBatch_3Retries').first().json.ticket_count }}</p><p><strong>Batch ID:</strong> {{ $('Code_CloudRun_ProcessBatch_3Retries').first().json.batch_http.batch_id }}</p><p><strong>Procesados OK:</strong> {{ $('Code_CloudRun_ProcessBatch_3Retries').first().json.batch_http.results.filter(r => r.success).length }} / {{ $('Code_CloudRun_ProcessBatch_3Retries').first().json.batch_http.results.length }}</p><p style=\\\"margin-top:20px\\\"><a href=\\\"{{ $json.resumeUrl }}?decision=approve\\\" style=\\\"display:inline-block;padding:10px 16px;background:#0f766e;color:#fff;border-radius:8px;text-decoration:none;margin-right:12px\\\">Aprobar lote</a><a href=\\\"{{ $json.resumeUrl }}?decision=reject\\\" style=\\\"display:inline-block;padding:10px 16px;background:#b91c1c;color:#fff;border-radius:8px;text-decoration:none\\\">Rechazar lote</a></p></body></html>"
-            }
-          ]
-        },
-        "options": {}
+        "mode": "runOnceForAllItems",
+        "jsCode": "const waitItem = $input.first().json;\nconst b = $('Code_Ethics_RAG').first().json;\nconst api = b.batch_http;\nconst ethics = b.ethics_report || {};\nconst tasks = api.curation_tasks || [];\nlet links = '';\nfor (const t of tasks) {\n  links += '<li><a href=\"' + String(t.curation_url || '').replace(/\"/g, '') + '\">' + String(t.filename || '') + '</a></li>';\n}\nconst resumeUrl = waitItem.resumeUrl || waitItem.executionResumeUrl || '';\nconst ethLine = ethics.needs_review\n  ? '<p style=\"color:#b45309\"><strong>Ética (embeddings vs manual):</strong> Revisar — similitud máx. ' + ethics.max_similarity + '</p>'\n  : '<p><strong>Ética:</strong> Sin alerta por similitud con el manual.</p>';\nconst html = '<html><body style=\"font-family:system-ui,sans-serif;max-width:640px\"><h2>Rendiciones — aprobación de lote</h2><p><strong>Tickets:</strong> ' + b.ticket_count + '</p><p><strong>Batch ID:</strong> ' + api.batch_id + '</p><p><strong>Procesados OK:</strong> ' + (api.results || []).filter((r) => r.success).length + ' / ' + (api.results || []).length + '</p>' + ethLine + '<p><strong>Curación (validar extracción IA):</strong></p><ul>' + (links || '<li>(sin enlaces)</li>') + '</ul><p style=\"margin-top:20px\"><a href=\"' + resumeUrl + '?decision=approve\" style=\"display:inline-block;padding:10px 16px;background:#0f766e;color:#fff;border-radius:8px;text-decoration:none;margin-right:12px\">Aprobar lote</a><a href=\"' + resumeUrl + '?decision=reject\" style=\"display:inline-block;padding:10px 16px;background:#b91c1c;color:#fff;border-radius:8px;text-decoration:none\">Rechazar lote</a></p></body></html>';\nreturn [{ json: { email_html: html } }];"
       },
-      "id": "set-mail",
-      "name": "Set_Email_Consolidado_HTML",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "id": "code-hitl-email",
+      "name": "Code_Prepare_HITL_Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [160, 260]
     },
     {
       "parameters": {
         "resource": "message",
         "operation": "send",
-        "sendTo": "={{ $env.HITL_APPROVER_EMAIL }}",
-        "subject": "=Rendiciones — Lote {{ $('Code_CloudRun_ProcessBatch_3Retries').first().json.ticket_count }} ticket(s)",
+        "sendTo": "={{ $('Set_Config_Provisorio').first().json.hitl_approver_email }}",
+        "subject": "=Rendiciones — Lote {{ $('Code_Ethics_RAG').first().json.ticket_count }} ticket(s)",
         "emailType": "html",
         "message": "={{ $json.email_html }}",
         "options": {}
@@ -164,7 +208,7 @@
     },
     {
       "parameters": {
-        "content": "## Multi-ticket Autodoc v2\n- Ajustá credenciales y variables de entorno (hostinger).\n- **HTTP Request** puede sustituir el Code del batch si tu versión admite multipart multi-archivo; se dejó **retry 3×** en código.\n- Crear hoja **Rendiciones** con las columnas del backend + metadatos `Batch_Id`, `Source_File`, `Drive_*`.\n### Retry vía n8n\nSi preferís, desactivá el bucle en Code y usá un nodo HTTP con *Retry On Fail* = 3.",
+        "content": "## Multi-ticket Autodoc v2\n### Próximas variables\nAgregarlas solo en **Set_Config_Provisorio** (Add Field). **SplitOut** propaga todo lo del Set a cada ticket (`$json.tu_campo`). Nodos sueltos: `{{ $('Set_Config_Provisorio').first().json.campo }}`.\n### Actual\n`cloud_run_base`, `x_autodoc_secret`, `google_sheet_id`, `hitl_approver_email`.\n### Prod\nValores fijos → expresiones `{{ $env... }}` en el mismo Set.\nHoja **Rendiciones**. **Code_Ethics_RAG** → `/ethics-rag`. Email incluye enlaces **curation_tasks**. **PUBLIC_BASE_URL** en Cloud Run para URLs absolutas. **SplitOut** lee binarios de **Webhook_Multipart**.",
         "height": 340,
         "width": 420,
         "color": 4
@@ -178,6 +222,9 @@
   ],
   "connections": {
     "Webhook_Multipart": {
+      "main": [[{ "node": "Set_Config_Provisorio", "type": "main", "index": 0 }]]
+    },
+    "Set_Config_Provisorio": {
       "main": [[{ "node": "SplitOut_UnItemPorImagen", "type": "main", "index": 0 }]]
     },
     "SplitOut_UnItemPorImagen": {
@@ -187,6 +234,9 @@
       "main": [[{ "node": "Code_CloudRun_ProcessBatch_3Retries", "type": "main", "index": 0 }]]
     },
     "Code_CloudRun_ProcessBatch_3Retries": {
+      "main": [[{ "node": "Code_Ethics_RAG", "type": "main", "index": 0 }]]
+    },
+    "Code_Ethics_RAG": {
       "main": [[{ "node": "Code_Expandir_Filas_Rendiciones", "type": "main", "index": 0 }]]
     },
     "Code_Expandir_Filas_Rendiciones": {
@@ -196,9 +246,9 @@
       "main": [[{ "node": "Wait_HITL_Consolidado", "type": "main", "index": 0 }]]
     },
     "Wait_HITL_Consolidado": {
-      "main": [[{ "node": "Set_Email_Consolidado_HTML", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Code_Prepare_HITL_Email", "type": "main", "index": 0 }]]
     },
-    "Set_Email_Consolidado_HTML": {
+    "Code_Prepare_HITL_Email": {
       "main": [[{ "node": "Gmail_HITL_Consolidado", "type": "main", "index": 0 }]]
     }
   }

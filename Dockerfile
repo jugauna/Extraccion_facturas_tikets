@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/app ./app
 COPY backend/prompts ./prompts
+COPY backend/data ./data
 
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser

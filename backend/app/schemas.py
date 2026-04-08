@@ -4,6 +4,32 @@ from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+# Orden de columnas para Sheets / UI de curación (accounting_schema.md)
+SHEETS_COLUMNS_ORDER: tuple[str, ...] = (
+    "Clase",
+    "Comprobante",
+    "Fecha",
+    "F.Emision",
+    "Nombre",
+    "Cuit",
+    "Articulo",
+    "Detalle",
+    "Cuenta",
+    "Precio",
+    "IVA",
+    "Centro Costo",
+    "Tipo Comp.",
+    "Afecta Iva",
+    "Percep 1",
+    "Importe Percep 1",
+    "Percep 2",
+    "Importe Percep 2",
+    "Percep 3",
+    "Importe Percep 3",
+    "Iva Total",
+    "Cantidad",
+)
+
 
 class AccountingRow(BaseModel):
     """22 columnas contables (accounting_schema.md) listas para Google Sheets."""
@@ -91,11 +117,38 @@ class TicketProcessResult(BaseModel):
     detail: Optional[str] = None
 
 
+class CurationTaskRef(BaseModel):
+    task_id: str
+    filename: str
+    index: int = Field(ge=0)
+    curation_url: str
+
+
 class ProcessBatchResponse(BaseModel):
     batch_id: Optional[str] = None
     ticket_count: int = 0
     user_notes: Optional[str] = None
     results: List[TicketProcessResult] = Field(default_factory=list)
+    curation_tasks: List[CurationTaskRef] = Field(default_factory=list)
+
+
+class EthicsRagRequest(BaseModel):
+    detalle: str = Field(default="", description="Texto del gasto (típicamente columna Detalle)")
+
+
+class EthicsRagResponse(BaseModel):
+    detalle_empty: bool = False
+    needs_review: bool = False
+    max_similarity: float = 0.0
+    threshold: float = 0.0
+    matches: List[dict[str, Any]] = Field(default_factory=list)
+    note: Optional[str] = None
+
+
+class CurationSubmitRequest(BaseModel):
+    task_id: str
+    token: str
+    rows: List[dict[str, Any]]
 
 
 class ErrorResponse(BaseModel):

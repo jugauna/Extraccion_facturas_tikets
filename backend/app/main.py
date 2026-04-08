@@ -1,16 +1,39 @@
 from __future__ import annotations
 
+import json
 import logging
+import secrets
 import traceback
 import uuid
+from pathlib import Path
 from typing import Annotated, List, Optional
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.templating import Jinja2Templates
 
 from app.config import get_settings
-from app.schemas import ErrorResponse, ProcessBatchResponse, TicketProcessResult
+from app.schemas import (
+    AccountingRow,
+    CurationSubmitRequest,
+    CurationTaskRef,
+    ErrorResponse,
+    EthicsRagRequest,
+    EthicsRagResponse,
+    ProcessBatchResponse,
+    SHEETS_COLUMNS_ORDER,
+    TicketProcessResult,
+)
+from app.services.curation_store import (
+    delete_pending,
+    load_pending,
+    save_gold_example,
+    save_pending,
+    verify_token,
+)
+from app.services.document_preview import make_preview_jpeg_bytes
+from app.services.ethics_rag import analyze_expense_text
 from app.services.extract_ticket import extract_ticket_from_bytes
 
 logging.basicConfig(
@@ -22,8 +45,36 @@ logger = logging.getLogger("autodoc.batch")
 app = FastAPI(
     title="Autodoc v2 — Multi-ticket",
     description="Procesamiento por lote de imágenes y PDFs (GPT-4o Vision) para Rendiciones.",
-    version="2.1.0",
+    version="2.2.0",
 )
+
+_TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+
+CURATION_FIELD_LABELS: dict[str, str] = {
+    "Clase": "Clase de comprobante",
+    "Comprobante": "Número de comprobante",
+    "Fecha": "Fecha (carga)",
+    "F.Emision": "Fecha de emisión",
+    "Nombre": "Razón social / nombre",
+    "Cuit": "CUIT",
+    "Articulo": "Artículo",
+    "Detalle": "Detalle",
+    "Cuenta": "Cuenta",
+    "Precio": "Precio / neto",
+    "IVA": "IVA",
+    "Centro Costo": "Centro de costo",
+    "Tipo Comp.": "Tipo comprobante",
+    "Afecta Iva": "Afecta IVA",
+    "Percep 1": "Percepción 1",
+    "Importe Percep 1": "Importe percep. 1",
+    "Percep 2": "Percepción 2",
+    "Importe Percep 2": "Importe percep. 2",
+    "Percep 3": "Percepción 3",
+    "Importe Percep 3": "Importe percep. 3",
+    "Iva Total": "IVA total",
+    "Cantidad": "Cantidad",
+}
 
 
 def _configure_cors(application: FastAPI) -> None:
@@ -82,9 +133,105 @@ def _mime_from_upload(upload: UploadFile) -> str:
     return "image/jpeg"
 
 
+def _parse_drive_links(raw: Optional[str]) -> dict[int, str]:
+    if not raw or not str(raw).strip():
+        return {}
+    try:
+        lst = json.loads(raw)
+        if isinstance(lst, list):
+            return {i: str(v or "") for i, v in enumerate(lst)}
+    except json.JSONDecodeError:
+        logger.warning("drive_links_json no es JSON válido")
+    return {}
+
+
+def _curation_public_url(path_with_query: str) -> str:
+    base = (get_settings().public_base_url or "").strip().rstrip("/")
+    if base:
+        return f"{base}{path_with_query}"
+    return path_with_query
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "autodoc-v2-batch"}
+
+
+@app.get("/curation/{task_id}", response_class=HTMLResponse)
+async def curation_page(request: Request, task_id: str, t: str = "") -> HTMLResponse:
+    pending = load_pending(task_id)
+    if not pending or not verify_token(pending, t):
+        raise HTTPException(status_code=404, detail="Enlace de curación inválido o expirado")
+
+    rows = pending.get("rows")
+    if not isinstance(rows, list) or not rows:
+        rows = [{}]
+
+    return templates.TemplateResponse(
+        "curation.html",
+        {
+            "request": request,
+            "task_id": task_id,
+            "token": t,
+            "filename": pending.get("filename", ""),
+            "batch_id": pending.get("batch_id", ""),
+            "preview_mime": pending.get("preview_mime", "image/jpeg"),
+            "preview_base64": pending.get("preview_base64", ""),
+            "drive_link": pending.get("drive_web_view_link") or "",
+            "columns": list(SHEETS_COLUMNS_ORDER),
+            "labels": {k: CURATION_FIELD_LABELS.get(k, k) for k in SHEETS_COLUMNS_ORDER},
+            "initial_rows": rows,
+        },
+    )
+
+
+@app.post("/curation/submit")
+async def curation_submit(body: CurationSubmitRequest) -> dict:
+    pending = load_pending(body.task_id)
+    if not pending or not verify_token(pending, body.token):
+        raise HTTPException(status_code=404, detail="Tarea inválida o token incorrecto")
+
+    if not body.rows:
+        raise HTTPException(status_code=400, detail="Enviá al menos una fila")
+
+    validated: list[AccountingRow] = []
+    try:
+        for raw in body.rows:
+            if not isinstance(raw, dict):
+                raise ValueError("Cada fila debe ser un objeto")
+            validated.append(AccountingRow.model_validate(raw))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Validación de filas: {e}") from e
+
+    sheets_dicts = [r.to_sheets_row() for r in validated]
+    save_gold_example(
+        task_id=body.task_id,
+        batch_id=str(pending.get("batch_id", "")),
+        filename=str(pending.get("filename", "")),
+        rows=sheets_dicts,
+        drive_link=str(pending.get("drive_web_view_link", "")),
+    )
+    delete_pending(body.task_id)
+    return {
+        "ok": True,
+        "message": "Guardado en gold_dataset. Las últimas correcciones se inyectan como few-shot en el system prompt.",
+    }
+
+
+@app.post(
+    "/ethics-rag",
+    response_model=EthicsRagResponse,
+    responses={401: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+)
+async def ethics_rag(
+    _: Annotated[None, Depends(require_autodoc_secret)],
+    body: EthicsRagRequest,
+) -> EthicsRagResponse:
+    try:
+        data = analyze_expense_text(body.detalle)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    return EthicsRagResponse(**data)
 
 
 @app.post(
@@ -104,6 +251,10 @@ async def process_batch(
     ],
     user_notes: Annotated[Optional[str], Form(description="Notas opcionales del usuario sobre el lote")] = None,
     batch_id: Annotated[Optional[str], Form()] = None,
+    drive_links_json: Annotated[
+        Optional[str],
+        Form(description="JSON array de enlaces Drive, mismo orden que images"),
+    ] = None,
 ) -> ProcessBatchResponse | JSONResponse:
     if not images:
         return JSONResponse(
@@ -113,9 +264,11 @@ async def process_batch(
 
     bid = (batch_id or "").strip() or str(uuid.uuid4())
     notes = (user_notes or "").strip()
+    drive_by_index = _parse_drive_links(drive_links_json)
     logger.info("process-batch batch_id=%s files=%s user_notes_len=%s", bid, len(images), len(notes))
 
     results: list[TicketProcessResult] = []
+    curation_tasks: list[CurationTaskRef] = []
 
     for index, upload in enumerate(images):
         name = upload.filename or f"ticket_{index}"
@@ -162,6 +315,32 @@ async def process_batch(
                     sheets_rows=sheets,
                 ),
             )
+
+            try:
+                preview = make_preview_jpeg_bytes(data, mime, name)
+                tid = str(uuid.uuid4())
+                tok = secrets.token_urlsafe(28)
+                save_pending(
+                    task_id=tid,
+                    submission_token=tok,
+                    batch_id=bid,
+                    filename=name,
+                    drive_link=drive_by_index.get(index, ""),
+                    preview_jpeg=preview,
+                    rows=sheets,
+                )
+                path_q = f"/curation/{tid}?t={tok}"
+                curation_tasks.append(
+                    CurationTaskRef(
+                        task_id=tid,
+                        filename=name,
+                        index=index,
+                        curation_url=_curation_public_url(path_q),
+                    ),
+                )
+            except Exception as cur_exc:
+                logger.warning("Curación no generada para %s: %s", name, cur_exc)
+
         except ValueError as e:
             logger.warning("Extracción inválida index=%s: %s", index, e)
             results.append(
@@ -196,4 +375,5 @@ async def process_batch(
         ticket_count=len(images),
         user_notes=notes or None,
         results=results,
+        curation_tasks=curation_tasks,
     )

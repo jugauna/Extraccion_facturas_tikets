@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -12,12 +13,24 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model_vision: str = "gpt-4o"
     cors_origins: str = ""
+    # Base pública del servicio (sin barra final) para enlaces de curación en correos, ej. https://xxx.run.app
+    public_base_url: str = ""
+    # Rutas de datos bajo cwd (Cloud Run: /app/data)
+    data_dir: str = "data"
+    # Si similitud embedding Detalle ↔ manual ≥ umbral, marcar revisión ética
+    ethics_similarity_review_threshold: float = 0.78
 
     def cors_origin_list(self) -> list[str]:
         raw = (self.cors_origins or "").strip()
         if not raw:
             return []
         return [o.strip() for o in raw.split(",") if o.strip()]
+
+    def resolve_data_dir(self) -> Path:
+        p = Path(self.data_dir)
+        if not p.is_absolute():
+            p = Path.cwd() / p
+        return p.resolve()
 
 
 @lru_cache

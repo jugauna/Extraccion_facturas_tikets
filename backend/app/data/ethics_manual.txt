@@ -1,0 +1,16 @@
+Manual de ética y política de gastos (referencia interna)
+
+Principios generales
+- Los gastos deben ser razonables, necesarios para la actividad y estar documentados.
+- No se reembolsan gastos personales, regalos a terceros ni entretenimiento no autorizado.
+
+Gastos no permitidos o que requieren aprobación previa
+- Alcohol, tabaco o entretenimiento no ligado a actividad laboral explícita aprobada.
+- Gastos en efectivo sin comprobante fiscal válido.
+- Pagos a familiares o partes relacionadas sin disclosure y aprobación.
+- Viajes o alojamiento fuera de política corporativa o sin presupuesto aprobado.
+
+Confidencialidad
+- No compartir datos de comprobantes en canales no autorizados.
+
+(Uso: el sistema compara el texto del gasto (campo Detalle) contra este manual mediante similitud semántica; revisión humana ante coincidencias relevantes.)
