@@ -147,6 +147,20 @@ def _parse_drive_links(raw: Optional[str]) -> dict[int, str]:
     return {}
 
 
+def _upload_files_from_form(form) -> list:
+    """Campos ``images`` del multipart. Sin isinstance(UploadFile): subclases distintas dejaban la lista vacía."""
+    out: list = []
+    for key, value in form.multi_items():
+        if key != "images":
+            continue
+        if isinstance(value, str):
+            continue
+        if getattr(value, "read", None) is None:
+            continue
+        out.append(value)
+    return out
+
+
 def _curation_public_url(path_with_query: str) -> str:
     base = (get_settings().public_base_url or "").strip().rstrip("/")
     if base:
@@ -329,10 +343,11 @@ async def process_batch(
     elif drive_links_json is not None:
         drive_links_json = str(drive_links_json)
 
-    raw_files = form.getlist("images")
-    images: list[UploadFile] = [f for f in raw_files if isinstance(f, UploadFile)]
+    images = _upload_files_from_form(form)
 
     if not images:
+        keys = [k for k, _ in form.multi_items()]
+        logger.warning("process-batch sin archivos en 'images'; keys=%s", keys)
         return JSONResponse(
             status_code=400,
             content=ErrorResponse(error="validation_error", detail="Enviá al menos un archivo").model_dump(),
