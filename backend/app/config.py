@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     data_dir: str = "data"
     # Si similitud embedding Detalle ↔ manual ≥ umbral, marcar revisión ética
     ethics_similarity_review_threshold: float = 0.78
+    # Webhook de n8n para persistencia post-curación (Sheets/Drive/email). Ej: https://.../webhook/autodoc-curation-submit
+    persist_webhook_url: str = ""
+    # Secreto opcional para el webhook de persistencia (header X-Autodoc-Secret)
+    persist_webhook_secret: str = ""
 
     def cors_origin_list(self) -> list[str]:
         raw = (self.cors_origins or "").strip()

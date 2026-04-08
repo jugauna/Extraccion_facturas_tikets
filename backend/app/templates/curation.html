@@ -11,40 +11,64 @@
 </head>
 <body class="min-h-screen bg-slate-100 text-slate-900">
   <header class="bg-white border-b border-slate-200 shadow-sm">
-    <div class="max-w-[1600px] mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-2">
-      <div>
-        <h1 class="text-lg font-semibold text-slate-800">Validación de extracción</h1>
-        <p class="text-sm text-slate-500">{{ filename }} · Batch {{ batch_id }}</p>
+    <div class="max-w-[1800px] mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      <div class="min-w-[240px]">
+        <h1 class="text-lg font-semibold text-slate-800">Curación en tiempo real</h1>
+        <p class="text-sm text-slate-500">Batch {{ batch_id }}{% if user_notes %} · Notas: {{ user_notes }}{% endif %}</p>
       </div>
-      <span class="inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-800 text-xs font-medium px-3 py-1 border border-teal-200">
-        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z"/></svg>
-        Procesado con IA — revisá y corregí antes de guardar
-      </span>
+
+      <div class="flex items-center gap-2">
+        <button id="btn-prev-doc" class="px-3 py-2 text-sm font-medium rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700">Anterior</button>
+        <div class="text-sm text-slate-600">
+          <span id="nav-counter" class="font-medium"></span>
+        </div>
+        <button id="btn-next-doc" class="px-3 py-2 text-sm font-medium rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700">Siguiente</button>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <span class="hidden sm:inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-800 text-xs font-medium px-3 py-1 border border-teal-200">
+          Revisá y confirmá. Guardado final al terminar el lote.
+        </span>
+        <button id="btn-finalize" class="px-4 py-2 text-sm font-semibold rounded-lg bg-brand-700 text-white hover:bg-brand-600 shadow-sm">
+          Confirmar y Finalizar
+        </button>
+      </div>
     </div>
   </header>
 
-  <main class="max-w-[1600px] mx-auto p-4 flex flex-col lg:flex-row gap-4 min-h-[calc(100vh-5rem)]">
+  <main class="max-w-[1800px] mx-auto p-4 flex flex-col lg:flex-row gap-4 min-h-[calc(100vh-5rem)]">
     <!-- Visor documento (izquierda) -->
-    <section class="lg:w-[52%] flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-      <div class="px-3 py-2 border-b border-slate-100 bg-slate-50 text-sm font-medium text-slate-600">Documento original</div>
-      <div class="flex-1 overflow-auto p-3 bg-slate-800/5 flex items-start justify-center min-h-[320px]">
-        <img src="data:{{ preview_mime }};base64,{{ preview_base64 }}" alt="Vista previa del comprobante" class="max-w-full h-auto rounded-lg shadow-md border border-slate-200" />
+    <section class="lg:w-[60%] flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden min-h-[520px]">
+      <div class="px-3 py-2 border-b border-slate-100 bg-slate-50 flex flex-wrap gap-2 items-center justify-between">
+        <div class="text-sm font-medium text-slate-600">Documento</div>
+        <div class="flex flex-wrap gap-2 items-center">
+          <button id="btn-zoom-out" class="px-2.5 py-1.5 text-xs font-semibold rounded-md border border-slate-300 bg-white hover:bg-slate-50">-</button>
+          <button id="btn-zoom-in" class="px-2.5 py-1.5 text-xs font-semibold rounded-md border border-slate-300 bg-white hover:bg-slate-50">+</button>
+          <button id="btn-rotate-left" class="px-2.5 py-1.5 text-xs font-semibold rounded-md border border-slate-300 bg-white hover:bg-slate-50">⟲</button>
+          <button id="btn-rotate-right" class="px-2.5 py-1.5 text-xs font-semibold rounded-md border border-slate-300 bg-white hover:bg-slate-50">⟳</button>
+          <button id="btn-reset-view" class="px-2.5 py-1.5 text-xs font-semibold rounded-md border border-slate-300 bg-white hover:bg-slate-50">Reset</button>
+        </div>
       </div>
-      {% if drive_link %}
-      <div class="px-3 py-2 border-t border-slate-100 text-xs">
-        <a href="{{ drive_link }}" target="_blank" rel="noopener" class="text-brand-700 hover:underline">Abrir en Google Drive ↗</a>
+      <div class="flex-1 overflow-auto p-3 bg-slate-900/5 flex items-start justify-center">
+        <div class="relative">
+          <img id="doc-img" alt="Comprobante" class="rounded-lg shadow-md border border-slate-200 origin-center select-none" />
+        </div>
       </div>
-      {% endif %}
+      <div class="px-3 py-2 border-t border-slate-100 text-xs flex flex-wrap gap-2 justify-between">
+        <span id="doc-filename" class="text-slate-600"></span>
+        <a id="doc-drive-link" href="#" target="_blank" rel="noopener" class="text-brand-700 hover:underline hidden">Abrir en Drive ↗</a>
+      </div>
     </section>
 
     <!-- Formulario (derecha) -->
-    <section class="lg:flex-1 flex flex-col gap-3 min-w-0">
+    <section class="lg:w-[40%] flex flex-col gap-3 min-w-0">
       <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex-1 flex flex-col min-h-0">
-        <h2 class="text-sm font-semibold text-slate-700 mb-3">Filas contables (22 columnas por fila)</h2>
-        <div id="rows-root" class="space-y-6 overflow-y-auto flex-1 pr-1"></div>
+        <h2 class="text-sm font-semibold text-slate-700 mb-3">Datos contables (por ticket)</h2>
+        <div class="overflow-y-auto flex-1 pr-1 space-y-4" id="form-root"></div>
         <div class="mt-4 flex flex-wrap gap-2 pt-3 border-t border-slate-100">
           <button type="button" id="btn-add-row" class="px-3 py-2 text-sm font-medium rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700">+ Agregar fila</button>
-          <button type="button" id="btn-save" class="px-4 py-2 text-sm font-semibold rounded-lg bg-brand-700 text-white hover:bg-brand-600 shadow-sm">Guardar en gold dataset</button>
+          <button type="button" id="btn-del-row" class="px-3 py-2 text-sm font-medium rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700">Eliminar fila</button>
+          <span class="text-xs text-slate-500 self-center">Fila(s): <span id="row-count" class="font-semibold"></span></span>
         </div>
         <p id="status-msg" class="mt-2 text-sm min-h-[1.25rem]" role="status"></p>
       </div>
@@ -56,52 +80,15 @@
     const TOKEN = {{ token | tojson }};
     const COLUMNS = {{ columns | tojson }};
     const LABELS = {{ labels | tojson }};
-    let rowsState = {{ initial_rows | tojson }};
+    const DOCS = {{ docs | tojson }};
+    let docIndex = {{ doc_index | tojson }};
 
-    function escAttr(s) {
-      return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-    }
-
-    function rowFieldsHtml(rowIndex, row) {
-      const wrap = document.createElement('div');
-      wrap.className = 'border border-slate-200 rounded-lg p-3 bg-slate-50/50';
-      wrap.dataset.rowIndex = String(rowIndex);
-      let h = '<div class="flex justify-between items-center mb-2"><span class="text-xs font-semibold text-slate-500">Fila ' + (rowIndex + 1) + '</span>';
-      if (rowsState.length > 1) {
-        h += '<button type="button" class="text-xs text-red-600 hover:underline btn-del-row">Eliminar fila</button>';
-      }
-      h += '</div><div class="grid grid-cols-1 sm:grid-cols-2 gap-2">';
-      for (const col of COLUMNS) {
-        const v = (row && row[col] != null) ? String(row[col]) : '';
-        const lab = LABELS[col] || col;
-        const id = 'f_' + rowIndex + '_' + col.replace(/[^a-zA-Z0-9]/g, '_');
-        h += '<label class="block text-xs"><span class="text-slate-500">' + escAttr(lab) + '</span><input data-col="' + escAttr(col) + '" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" id="' + id + '" value="' + escAttr(v) + '" /></label>';
-      }
-      h += '</div>';
-      wrap.innerHTML = h;
-      wrap.querySelector('.btn-del-row')?.addEventListener('click', () => {
-        rowsState.splice(rowIndex, 1);
-        renderAll();
-      });
-      return wrap;
-    }
-
-    function readRowFromDom(rowIndex) {
-      const wrap = document.querySelector('[data-row-index="' + rowIndex + '"]');
-      if (!wrap) return {};
-      const o = {};
-      wrap.querySelectorAll('input[data-col]').forEach((inp) => {
-        o[inp.getAttribute('data-col')] = inp.value;
-      });
-      return o;
-    }
-
-    function renderAll() {
-      const root = document.getElementById('rows-root');
-      root.innerHTML = '';
-      rowsState.forEach((row, i) => {
-        root.appendChild(rowFieldsHtml(i, row));
-      });
+    // visor: zoom / rotación
+    let zoom = 1.0;
+    let rot = 0;
+    function applyTransform() {
+      const img = document.getElementById('doc-img');
+      img.style.transform = `scale(${zoom}) rotate(${rot}deg)`;
     }
 
     function emptyRow() {
@@ -111,28 +98,138 @@
       return o;
     }
 
+    function ensureDocRows(d) {
+      if (!d.rows || !Array.isArray(d.rows) || !d.rows.length) d.rows = [emptyRow()];
+      d.rows = d.rows.map((r) => r && typeof r === 'object' ? r : emptyRow());
+    }
+
+    function esc(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    }
+
+    const CATEGORIES = [
+      { title: 'Identificación', cols: ['Clase','Comprobante','F.Emision','Nombre','Cuit','Tipo Comp.'] },
+      { title: 'Concepto', cols: ['Articulo','Detalle','Cuenta','Centro Costo','Afecta Iva'] },
+      { title: 'Importes', cols: ['Cantidad','Precio','IVA','Iva Total'] },
+      { title: 'Percepciones', cols: ['Percep 1','Importe Percep 1','Percep 2','Importe Percep 2','Percep 3','Importe Percep 3'] },
+      { title: 'Control', cols: ['Fecha'] },
+    ];
+
+    function getCurrentDoc() { return DOCS[docIndex]; }
+
+    function renderDoc() {
+      DOCS.forEach(ensureDocRows);
+      const d = getCurrentDoc();
+
+      document.getElementById('nav-counter').textContent = `Ticket ${docIndex + 1} de ${DOCS.length}`;
+      document.getElementById('doc-filename').textContent = d.filename || '';
+
+      const driveA = document.getElementById('doc-drive-link');
+      if (d.drive_web_view_link) {
+        driveA.classList.remove('hidden');
+        driveA.href = d.drive_web_view_link;
+      } else {
+        driveA.classList.add('hidden');
+        driveA.href = '#';
+      }
+
+      const img = document.getElementById('doc-img');
+      img.src = `data:${d.preview_mime || 'image/jpeg'};base64,${d.preview_base64 || ''}`;
+      zoom = 1.0; rot = 0; applyTransform();
+
+      const root = document.getElementById('form-root');
+      root.innerHTML = '';
+      const rows = d.rows;
+      document.getElementById('row-count').textContent = String(rows.length);
+
+      rows.forEach((row, rIdx) => {
+        const card = document.createElement('div');
+        card.className = 'rounded-lg border border-slate-200 bg-slate-50/50 p-3';
+        card.dataset.row = String(rIdx);
+        card.innerHTML = `<div class="flex items-center justify-between mb-2">
+            <div class="text-xs font-semibold text-slate-600">Fila ${rIdx + 1}</div>
+          </div>`;
+
+        for (const cat of CATEGORIES) {
+          const section = document.createElement('div');
+          section.className = 'mt-3';
+          section.innerHTML = `<div class="text-xs font-semibold text-slate-500 mb-2">${esc(cat.title)}</div>`;
+          const grid = document.createElement('div');
+          grid.className = 'grid grid-cols-1 sm:grid-cols-2 gap-2';
+
+          for (const col of cat.cols) {
+            if (!COLUMNS.includes(col)) continue;
+            const lab = LABELS[col] || col;
+            const v = row[col] != null ? String(row[col]) : '';
+            const id = `d${docIndex}_r${rIdx}_${col.replace(/[^a-zA-Z0-9]/g,'_')}`;
+            const wrap = document.createElement('label');
+            wrap.className = 'block text-xs';
+            wrap.innerHTML = `<span class="text-slate-500">${esc(lab)}</span>
+              <input data-col="${esc(col)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm bg-white"
+                id="${id}" value="${esc(v)}" />`;
+            grid.appendChild(wrap);
+          }
+          section.appendChild(grid);
+          card.appendChild(section);
+        }
+        root.appendChild(card);
+      });
+    }
+
+    function captureDocEdits() {
+      const d = getCurrentDoc();
+      const root = document.getElementById('form-root');
+      const cards = Array.from(root.querySelectorAll('[data-row]'));
+      const out = [];
+      for (const c of cards) {
+        const row = {};
+        c.querySelectorAll('input[data-col]').forEach((inp) => {
+          row[inp.getAttribute('data-col')] = inp.value;
+        });
+        out.push(row);
+      }
+      d.rows = out.length ? out : [emptyRow()];
+    }
+
+    function go(delta) {
+      captureDocEdits();
+      docIndex = Math.max(0, Math.min(docIndex + delta, DOCS.length - 1));
+      renderDoc();
+    }
+
+    document.getElementById('btn-prev-doc').addEventListener('click', () => go(-1));
+    document.getElementById('btn-next-doc').addEventListener('click', () => go(1));
+
     document.getElementById('btn-add-row').addEventListener('click', () => {
-      const idx = rowsState.length;
-      if (idx > 0) rowsState.push(readRowFromDom(idx - 1));
-      else rowsState.push(emptyRow());
-      renderAll();
+      captureDocEdits();
+      const d = getCurrentDoc();
+      d.rows.push(emptyRow());
+      renderDoc();
+    });
+    document.getElementById('btn-del-row').addEventListener('click', () => {
+      captureDocEdits();
+      const d = getCurrentDoc();
+      if (d.rows.length > 1) d.rows.pop();
+      renderDoc();
     });
 
-    document.getElementById('btn-save').addEventListener('click', async () => {
+    document.getElementById('btn-zoom-in').addEventListener('click', () => { zoom = Math.min(4, zoom + 0.2); applyTransform(); });
+    document.getElementById('btn-zoom-out').addEventListener('click', () => { zoom = Math.max(0.2, zoom - 0.2); applyTransform(); });
+    document.getElementById('btn-rotate-left').addEventListener('click', () => { rot = (rot - 90) % 360; applyTransform(); });
+    document.getElementById('btn-rotate-right').addEventListener('click', () => { rot = (rot + 90) % 360; applyTransform(); });
+    document.getElementById('btn-reset-view').addEventListener('click', () => { zoom = 1.0; rot = 0; applyTransform(); });
+
+    document.getElementById('btn-finalize').addEventListener('click', async () => {
       const msg = document.getElementById('status-msg');
+      msg.className = 'mt-2 text-sm';
       msg.textContent = '';
-      const collected = [];
-      document.querySelectorAll('#rows-root > div[data-row-index]').forEach((el) => {
-        const i = parseInt(el.getAttribute('data-row-index'), 10);
-        collected[i] = readRowFromDom(i);
-      });
-      const rows = collected.filter(Boolean);
-      msg.textContent = 'Guardando…';
+      captureDocEdits();
+      msg.textContent = 'Confirmando…';
       try {
         const res = await fetch('/curation/submit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ task_id: TASK_ID, token: TOKEN, rows }),
+          body: JSON.stringify({ task_id: TASK_ID, token: TOKEN, docs: DOCS.map((d) => ({ rows: d.rows })) }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
@@ -140,17 +237,16 @@
           msg.className = 'mt-2 text-sm text-red-600';
           return;
         }
-        msg.textContent = data.message || 'Guardado correctamente. Podés cerrar esta ventana.';
+        msg.textContent = data.message || 'Confirmado. Podés cerrar esta ventana.';
         msg.className = 'mt-2 text-sm text-teal-700';
-        document.getElementById('btn-save').disabled = true;
+        document.getElementById('btn-finalize').disabled = true;
       } catch (e) {
         msg.textContent = 'Error de red: ' + e.message;
         msg.className = 'mt-2 text-sm text-red-600';
       }
     });
 
-    if (!rowsState || !rowsState.length) rowsState = [emptyRow()];
-    renderAll();
+    renderDoc();
   </script>
 </body>
 </html>

@@ -26,29 +26,32 @@ def _pending_dir() -> Path:
     return d
 
 
-def save_pending(
+def save_pending_batch(
     task_id: str,
     submission_token: str,
     batch_id: str,
-    filename: str,
-    drive_link: str,
-    preview_jpeg: bytes,
-    rows: list[dict[str, str]],
+    user_notes: str,
+    docs: list[dict[str, Any]],
 ) -> None:
+    """
+    Guarda una sesión de curación (lote) con N documentos.
+    Cada doc debe incluir:
+      - filename, mime
+      - original_base64 (bytes originales)
+      - preview_mime, preview_base64 (para UI)
+      - rows (lista de dicts para sheets/UI)
+    """
     payload = {
         "task_id": task_id,
         "submission_token": submission_token,
         "batch_id": batch_id,
-        "filename": filename,
-        "drive_web_view_link": drive_link,
-        "preview_mime": "image/jpeg",
-        "preview_base64": base64.standard_b64encode(preview_jpeg).decode("ascii"),
-        "rows": rows,
+        "user_notes": user_notes,
+        "docs": docs,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     path = _pending_dir() / f"{task_id}.json"
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info("Curation pending guardado task_id=%s", task_id)
+    logger.info("Curation pending (batch) guardado task_id=%s docs=%s", task_id, len(docs))
 
 
 def load_pending(task_id: str) -> dict[str, Any] | None:
@@ -74,23 +77,21 @@ def verify_token(pending: dict[str, Any], token: str | None) -> bool:
     return (pending.get("submission_token") or "") == token
 
 
-def save_gold_example(
+def save_gold_batch(
     task_id: str,
     batch_id: str,
-    filename: str,
-    rows: list[dict[str, str]],
-    drive_link: str,
+    user_notes: str,
+    docs: list[dict[str, Any]],
 ) -> Path:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    name = f"{stamp}_{task_id[:8]}.json"
+    name = f"{stamp}_{task_id[:8]}_batch.json"
     path = _gold_dir() / name
     doc = {
         "saved_at": datetime.now(timezone.utc).isoformat(),
         "task_id": task_id,
         "batch_id": batch_id,
-        "filename": filename,
-        "drive_web_view_link": drive_link,
-        "rows": rows,
+        "user_notes": user_notes,
+        "docs": docs,
         "source": "human_curation",
     }
     path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")

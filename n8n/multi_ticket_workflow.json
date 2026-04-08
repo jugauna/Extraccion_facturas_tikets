@@ -1,5 +1,5 @@
 {
-  "name": "Autodoc v2 — Multi-ticket (Cloud Run + Sheets Rendiciones + Drive + HITL)",
+  "name": "Autodoc v2 — Multi-ticket (Sync → Curation URL)",
   "active": false,
   "settings": { "executionOrder": "v1" },
   "meta": { "instanceId": "autodoc-v2-multi" },
@@ -8,7 +8,7 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "autodoc-multi-ticket",
-        "responseMode": "onReceived",
+        "responseMode": "lastNode",
         "options": {}
       },
       "id": "wh-1",
@@ -71,33 +71,14 @@
       "notesInFlow": true,
       "notes": "Binario desde Webhook_Multipart (el Set pierde binarios). Config desde Set_Config_Provisorio. N ítems = N archivos."
     },
-    {
-      "parameters": {
-        "resource": "file",
-        "operation": "upload",
-        "inputDataFieldName": "image",
-        "name": "={{ $json.filename }}",
-        "options": {}
-      },
-      "id": "drive-up",
-      "name": "GoogleDrive_Upload_Imagen",
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 3,
-      "position": [-1020, 260],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "REPLACE_DRIVE_CRED",
-          "name": "Google Drive OAuth2"
-        }
-      }
-    },
+    
     {
       "parameters": {
         "mode": "runOnceForAllItems",
         "jsCode": "const orig = $('SplitOut_UnItemPorImagen').all();\nconst uploaded = $input.all();\nif (!orig.length) throw new Error('No hay ítems originales');\nif (uploaded.length !== orig.length) {\n  throw new Error(`Drive devolvió ${uploaded.length} ítems, se esperaban ${orig.length}`);\n}\n\nconst drive_items = uploaded.map((u, idx) => {\n  const j = u.json || {};\n  return {\n    index: idx,\n    drive_id: j.id,\n    drive_web_view_link: j.webViewLink || j.webContentLink || '',\n    filename: orig[idx]?.json?.filename,\n  };\n});\n\nfunction mpField(boundary, name, value) {\n  const head = Buffer.from(\n    `--${boundary}\\r\\nContent-Disposition: form-data; name=\"${name}\"\\r\\n\\r\\n`,\n    'utf-8',\n  );\n  return Buffer.concat([head, Buffer.from(String(value), 'utf-8'), Buffer.from('\\r\\n', 'utf-8')]);\n}\n\nfunction mpFilePart(boundary, fieldName, filename, buf, mimeType) {\n  const safeName = (String(filename || 'file').replace(/\"/g, '_').replace(/[^\\w.\\-]/g, '_').replace(/_+/g, '_').slice(0, 200) || 'upload');\n  const mime = mimeType || 'application/octet-stream';\n  const header = Buffer.from(\n    `--${boundary}\\r\\nContent-Disposition: form-data; name=\"${fieldName}\"; filename=\"${safeName}\"\\r\\nContent-Type: ${mime}\\r\\n\\r\\n`,\n    'utf-8',\n  );\n  return Buffer.concat([header, buf, Buffer.from('\\r\\n', 'utf-8')]);\n}\n\nconst batch_id = String(orig[0].json.batch_id || $execution.id);\nconst un = orig[0].json.user_notes || '';\nconst boundary = 'n8n_' + Math.random().toString(36).slice(2) + '_' + Date.now();\n\nconst parts = [];\nparts.push(mpField(boundary, 'batch_id', batch_id));\nif (un) parts.push(mpField(boundary, 'user_notes', String(un)));\nparts.push(mpField(boundary, 'drive_links_json', JSON.stringify(drive_items.map((d) => String(d.drive_web_view_link || d.drive_webContentLink || '')))));\n\nfor (let i = 0; i < orig.length; i++) {\n  const it = orig[i];\n  const bin = it.binary?.image;\n  let buf;\n  if (bin && bin.data) {\n    buf = Buffer.from(bin.data, 'base64');\n  } else if (this.helpers.getBinaryDataBuffer) {\n    buf = await this.helpers.getBinaryDataBuffer(i, 'image');\n  } else {\n    throw new Error('No se pudo leer el binario');\n  }\n  const fn = it.json.filename || `ticket_${i}.bin`;\n  const mime = bin?.mimeType || bin?.fileType || 'application/octet-stream';\n  parts.push(mpFilePart(boundary, 'images', fn, buf, mime));\n}\n\nparts.push(Buffer.from(`--${boundary}--\\r\\n`, 'utf-8'));\nconst body = Buffer.concat(parts);\n\nlet base = String(orig[0].json.cloud_run_base || '').trim();\nwhile (base.endsWith('/')) base = base.slice(0, -1);\nif (!base) throw new Error('Falta cloud_run_base (nodo Set_Config_Provisorio)');\nconst url = `${base}/process-batch`;\nconst secret = String(orig[0].json.x_autodoc_secret || '');\nif (!secret) throw new Error('Falta x_autodoc_secret (nodo Set_Config_Provisorio)');\n\nlet lastErr;\nlet parsed;\nfor (let attempt = 1; attempt <= 3; attempt++) {\n  try {\n    const res = await this.helpers.httpRequest({\n      method: 'POST',\n      url,\n      headers: {\n        'Content-Type': `multipart/form-data; boundary=${boundary}`,\n        'X-Autodoc-Secret': secret,\n      },\n      body,\n      timeout: 180000,\n    });\n    parsed = typeof res === 'string' ? JSON.parse(res) : res;\n    lastErr = null;\n    break;\n  } catch (e) {\n    lastErr = e;\n    if (attempt < 3) await new Promise((r) => setTimeout(r, 2000 * attempt));\n  }\n}\nif (lastErr) throw lastErr;\n\nreturn [{\n  json: {\n    batch_http: parsed,\n    drive_items,\n    ticket_count: orig.length,\n  },\n}];"
       },
       "id": "code-batch",
-      "name": "Code_CloudRun_ProcessBatch_3Retries",
+      "name": "Code_Sync_ReturnCurationUrl",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [-800, 260]
@@ -208,8 +189,8 @@
     },
     {
       "parameters": {
-        "content": "## Multi-ticket Autodoc v2\n### Próximas variables\nAgregarlas solo en **Set_Config_Provisorio** (Add Field). **SplitOut** propaga todo lo del Set a cada ticket (`$json.tu_campo`). Nodos sueltos: `{{ $('Set_Config_Provisorio').first().json.campo }}`.\n### Actual\n`cloud_run_base`, `x_autodoc_secret`, `google_sheet_id`, `hitl_approver_email`.\n### Prod\nValores fijos → expresiones `{{ $env... }}` en el mismo Set.\nHoja **Rendiciones**. **Code_Ethics_RAG** → `/ethics-rag`. Email incluye enlaces **curation_tasks**. **PUBLIC_BASE_URL** en Cloud Run para URLs absolutas. **SplitOut** lee binarios de **Webhook_Multipart**.",
-        "height": 340,
+        "content": "## Sync → Curación inmediata\n- Webhook responde **curation_url** (responseMode=lastNode).\n- Set_Config_Provisorio define `cloud_run_base` y `x_autodoc_secret`.\n- Divi redirige `window.location.href = curation_url`.\n\n### Persistencia post-curación\n- El backend llama a `PERSIST_WEBHOOK_URL` (n8n) en `POST /curation/submit` para guardar en Sheets/Drive y enviar resumen.\n",
+        "height": 260,
         "width": 420,
         "color": 4
       },
@@ -228,28 +209,7 @@
       "main": [[{ "node": "SplitOut_UnItemPorImagen", "type": "main", "index": 0 }]]
     },
     "SplitOut_UnItemPorImagen": {
-      "main": [[{ "node": "GoogleDrive_Upload_Imagen", "type": "main", "index": 0 }]]
-    },
-    "GoogleDrive_Upload_Imagen": {
-      "main": [[{ "node": "Code_CloudRun_ProcessBatch_3Retries", "type": "main", "index": 0 }]]
-    },
-    "Code_CloudRun_ProcessBatch_3Retries": {
-      "main": [[{ "node": "Code_Ethics_RAG", "type": "main", "index": 0 }]]
-    },
-    "Code_Ethics_RAG": {
-      "main": [[{ "node": "Code_Expandir_Filas_Rendiciones", "type": "main", "index": 0 }]]
-    },
-    "Code_Expandir_Filas_Rendiciones": {
-      "main": [[{ "node": "GoogleSheets_Rendiciones", "type": "main", "index": 0 }]]
-    },
-    "GoogleSheets_Rendiciones": {
-      "main": [[{ "node": "Wait_HITL_Consolidado", "type": "main", "index": 0 }]]
-    },
-    "Wait_HITL_Consolidado": {
-      "main": [[{ "node": "Code_Prepare_HITL_Email", "type": "main", "index": 0 }]]
-    },
-    "Code_Prepare_HITL_Email": {
-      "main": [[{ "node": "Gmail_HITL_Consolidado", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Code_Sync_ReturnCurationUrl", "type": "main", "index": 0 }]]
     }
   }
 }

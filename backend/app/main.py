@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import secrets
 import traceback
+import urllib.request
 import uuid
 from pathlib import Path
 from typing import Annotated, List, Optional
@@ -28,8 +30,8 @@ from app.schemas import (
 from app.services.curation_store import (
     delete_pending,
     load_pending,
-    save_gold_example,
-    save_pending,
+    save_gold_batch,
+    save_pending_batch,
     verify_token,
 )
 from app.services.document_preview import make_preview_jpeg_bytes
@@ -158,14 +160,15 @@ async def health() -> dict[str, str]:
 
 
 @app.get("/curation/{task_id}", response_class=HTMLResponse)
-async def curation_page(request: Request, task_id: str, t: str = "") -> HTMLResponse:
+async def curation_page(request: Request, task_id: str, t: str = "", i: int = 0) -> HTMLResponse:
     pending = load_pending(task_id)
     if not pending or not verify_token(pending, t):
         raise HTTPException(status_code=404, detail="Enlace de curación inválido o expirado")
 
-    rows = pending.get("rows")
-    if not isinstance(rows, list) or not rows:
-        rows = [{}]
+    docs = pending.get("docs")
+    if not isinstance(docs, list) or not docs:
+        raise HTTPException(status_code=404, detail="Sin documentos para curación")
+    idx = max(0, min(int(i or 0), len(docs) - 1))
 
     return templates.TemplateResponse(
         "curation.html",
@@ -173,14 +176,12 @@ async def curation_page(request: Request, task_id: str, t: str = "") -> HTMLResp
             "request": request,
             "task_id": task_id,
             "token": t,
-            "filename": pending.get("filename", ""),
             "batch_id": pending.get("batch_id", ""),
-            "preview_mime": pending.get("preview_mime", "image/jpeg"),
-            "preview_base64": pending.get("preview_base64", ""),
-            "drive_link": pending.get("drive_web_view_link") or "",
+            "user_notes": pending.get("user_notes", ""),
+            "docs": docs,
+            "doc_index": idx,
             "columns": list(SHEETS_COLUMNS_ORDER),
             "labels": {k: CURATION_FIELD_LABELS.get(k, k) for k in SHEETS_COLUMNS_ORDER},
-            "initial_rows": rows,
         },
     )
 
@@ -191,30 +192,75 @@ async def curation_submit(body: CurationSubmitRequest) -> dict:
     if not pending or not verify_token(pending, body.token):
         raise HTTPException(status_code=404, detail="Tarea inválida o token incorrecto")
 
-    if not body.rows:
-        raise HTTPException(status_code=400, detail="Enviá al menos una fila")
+    if not body.docs:
+        raise HTTPException(status_code=400, detail="Enviá al menos un documento")
 
-    validated: list[AccountingRow] = []
+    src_docs = pending.get("docs") if isinstance(pending.get("docs"), list) else []
+    if len(src_docs) != len(body.docs):
+        raise HTTPException(status_code=400, detail="Cantidad de documentos no coincide con la sesión")
+
+    gold_docs: list[dict] = []
     try:
-        for raw in body.rows:
-            if not isinstance(raw, dict):
-                raise ValueError("Cada fila debe ser un objeto")
-            validated.append(AccountingRow.model_validate(raw))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Validación de filas: {e}") from e
+        for idx, (src, corrected) in enumerate(zip(src_docs, body.docs, strict=True)):
+            rows_raw = corrected.get("rows")
+            if not isinstance(rows_raw, list) or not rows_raw:
+                rows_raw = [{}]
+            validated: list[AccountingRow] = []
+            for r in rows_raw:
+                if not isinstance(r, dict):
+                    raise ValueError(f"docs[{idx}].rows[*] debe ser objeto")
+                validated.append(AccountingRow.model_validate(r))
+            rows_out = [r.to_sheets_row() for r in validated]
 
-    sheets_dicts = [r.to_sheets_row() for r in validated]
-    save_gold_example(
+            gold_docs.append(
+                {
+                    "index": idx,
+                    "filename": str(src.get("filename", "")),
+                    "mime": str(src.get("mime", "")),
+                    "original_base64": str(src.get("original_base64", "")),
+                    "rows": rows_out,
+                }
+            )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Validación: {e}") from e
+
+    gold_path = save_gold_batch(
         task_id=body.task_id,
         batch_id=str(pending.get("batch_id", "")),
-        filename=str(pending.get("filename", "")),
-        rows=sheets_dicts,
-        drive_link=str(pending.get("drive_web_view_link", "")),
+        user_notes=str(pending.get("user_notes", "")),
+        docs=gold_docs,
     )
     delete_pending(body.task_id)
+
+    # Notificar a n8n (persistencia final) si está configurado.
+    settings = get_settings()
+    if settings.persist_webhook_url.strip():
+        payload = {
+            "task_id": body.task_id,
+            "batch_id": str(pending.get("batch_id", "")),
+            "user_notes": str(pending.get("user_notes", "")),
+            "gold_path": str(gold_path.name),
+            "docs": gold_docs,
+        }
+        try:
+            req = urllib.request.Request(
+                settings.persist_webhook_url.strip(),
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Autodoc-Secret": settings.persist_webhook_secret.strip(),
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+                _ = resp.read()
+        except Exception as e:
+            # No bloquea el éxito de curación: el usuario ya confirmó.
+            logger.warning("No se pudo notificar persistencia a n8n: %s", e)
+
     return {
         "ok": True,
-        "message": "Guardado en gold_dataset. Las últimas correcciones se inyectan como few-shot en el system prompt.",
+        "message": "Confirmado. Se guardó gold_dataset y se notificó la persistencia (si está configurada).",
     }
 
 
@@ -255,7 +301,7 @@ async def process_batch(
     images: Annotated[
         List[UploadFile],
         File(description="Uno o más archivos: imágenes (tickets) y/o PDFs"),
-    ],
+    ] = [],
 ) -> ProcessBatchResponse | JSONResponse:
     if not images:
         return JSONResponse(
@@ -269,7 +315,7 @@ async def process_batch(
     logger.info("process-batch batch_id=%s files=%s user_notes_len=%s", bid, len(images), len(notes))
 
     results: list[TicketProcessResult] = []
-    curation_tasks: list[CurationTaskRef] = []
+    pending_docs: list[dict] = []
 
     for index, upload in enumerate(images):
         name = upload.filename or f"ticket_{index}"
@@ -316,31 +362,22 @@ async def process_batch(
                     sheets_rows=sheets,
                 ),
             )
-
             try:
                 preview = make_preview_jpeg_bytes(data, mime, name)
-                tid = str(uuid.uuid4())
-                tok = secrets.token_urlsafe(28)
-                save_pending(
-                    task_id=tid,
-                    submission_token=tok,
-                    batch_id=bid,
-                    filename=name,
-                    drive_link=drive_by_index.get(index, ""),
-                    preview_jpeg=preview,
-                    rows=sheets,
-                )
-                path_q = f"/curation/{tid}?t={tok}"
-                curation_tasks.append(
-                    CurationTaskRef(
-                        task_id=tid,
-                        filename=name,
-                        index=index,
-                        curation_url=_curation_public_url(path_q),
-                    ),
+                pending_docs.append(
+                    {
+                        "index": index,
+                        "filename": name,
+                        "mime": mime,
+                        "preview_mime": "image/jpeg",
+                        "preview_base64": base64.standard_b64encode(preview).decode("ascii"),
+                        "original_base64": base64.standard_b64encode(data).decode("ascii"),
+                        "drive_web_view_link": drive_by_index.get(index, ""),
+                        "rows": sheets,
+                    }
                 )
             except Exception as cur_exc:
-                logger.warning("Curación no generada para %s: %s", name, cur_exc)
+                logger.warning("Preview/pending no generado para %s: %s", name, cur_exc)
 
         except ValueError as e:
             logger.warning("Extracción inválida index=%s: %s", index, e)
@@ -371,10 +408,23 @@ async def process_batch(
                 ),
             )
 
+    # Crear UNA sesión batch de curación.
+    tid = str(uuid.uuid4())
+    tok = secrets.token_urlsafe(28)
+    save_pending_batch(
+        task_id=tid,
+        submission_token=tok,
+        batch_id=bid,
+        user_notes=notes,
+        docs=pending_docs if pending_docs else [],
+    )
+    path_q = f"/curation/{tid}?t={tok}&i=0"
+
     return ProcessBatchResponse(
         batch_id=bid,
         ticket_count=len(images),
         user_notes=notes or None,
         results=results,
-        curation_tasks=curation_tasks,
+        task_id=tid,
+        curation_url=_curation_public_url(path_q),
     )

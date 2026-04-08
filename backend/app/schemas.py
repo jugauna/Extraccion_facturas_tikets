@@ -129,7 +129,9 @@ class ProcessBatchResponse(BaseModel):
     ticket_count: int = 0
     user_notes: Optional[str] = None
     results: List[TicketProcessResult] = Field(default_factory=list)
-    curation_tasks: List[CurationTaskRef] = Field(default_factory=list)
+    # Nueva versión: una sola sesión batch de curación (navegación Ticket 1..N)
+    curation_url: Optional[str] = None
+    task_id: Optional[str] = None
 
 
 class EthicsRagRequest(BaseModel):
@@ -148,7 +150,8 @@ class EthicsRagResponse(BaseModel):
 class CurationSubmitRequest(BaseModel):
     task_id: str
     token: str
-    rows: List[dict[str, Any]]
+    # docs[i].rows = filas corregidas para el documento i (cada fila con 22 columnas)
+    docs: List[dict[str, Any]]
 
 
 class ErrorResponse(BaseModel):

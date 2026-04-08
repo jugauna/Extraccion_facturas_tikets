@@ -51,7 +51,7 @@
 
 <script>
 (function () {
-  const N8N_WEBHOOK_URL = 'https://n8n.srv1392353.hstgr.cloud/webhook-test/autodoc-multi-ticket';
+  const N8N_WEBHOOK_URL = 'https://n8n.srv1392353.hstgr.cloud/webhook/autodoc-multi-ticket';
 
   const form = document.getElementById('autodoc_form');
   const input = document.getElementById('ticket_files');
@@ -98,8 +98,9 @@
     indeterminateProgress(true);
 
     const ctrl = new AbortController();
+    setStatus('Estamos analizando tus documentos con IA. En segundos podrás validarlos…', null);
     const slowMsg = window.setTimeout(function () {
-      setStatus('Procesando varios archivos puede tardar más de 30 segundos…', null);
+      setStatus('Seguimos analizando con IA… en breve te llevamos a la pantalla de validación.', null);
     }, 8000);
 
     try {
@@ -124,7 +125,13 @@
         return;
       }
 
-      setStatus('Lote enviado correctamente. Referencia: ' + (body.batch_id || body.batch_http?.batch_id || '—') + '. Revisá tu correo para la aprobación (HITL).', 'ok');
+      const url = body.curation_url || body.curationUrl || body.url;
+      if (url) {
+        setStatus('Listo. Redirigiendo a la pantalla de validación…', 'ok');
+        window.location.href = url;
+        return;
+      }
+      setStatus('Respuesta OK pero sin curation_url. Revisá n8n/back.', 'error');
     } catch (err) {
       clearTimeout(slowMsg);
       if (err.name === 'AbortError') {
