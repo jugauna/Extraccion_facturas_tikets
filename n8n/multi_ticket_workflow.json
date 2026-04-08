@@ -33,18 +33,6 @@
               "name": "x_autodoc_secret",
               "type": "string",
               "value": "CAMBIAR_MISMO_VALOR_QUE_AUTODOC_SECRET_EN_CLOUD_RUN"
-            },
-            {
-              "id": "gs",
-              "name": "google_sheet_id",
-              "type": "string",
-              "value": "PEGAR_ID_DEL_GOOGLE_SHEET"
-            },
-            {
-              "id": "mail",
-              "name": "hitl_approver_email",
-              "type": "string",
-              "value": "tu-email@ejemplo.com"
             }
           ]
         },
@@ -56,7 +44,7 @@
       "typeVersion": 3.4,
       "position": [-1350, 260],
       "notesInFlow": true,
-      "notes": "Único lugar para config provisoria: agregar campos con Add Field. Llegan a cada ítem (SplitOut hace spread). En otros nodos: $json.mi_campo o $('Set_Config_Provisorio').first().json.mi_campo. Producción: $env en estos valores."
+      "notes": "Solo hace falta cloud_run_base y x_autodoc_secret para llamar a /process-batch. Persistencia post-curación: otro flujo n8n (PERSIST_WEBHOOK_URL en Cloud Run)."
     },
     {
       "parameters": {
@@ -71,7 +59,6 @@
       "notesInFlow": true,
       "notes": "Binario desde Webhook_Multipart (el Set pierde binarios). Config desde Set_Config_Provisorio. N ítems = N archivos."
     },
-    
     {
       "parameters": {
         "mode": "runOnceForAllItems",
@@ -85,113 +72,9 @@
     },
     {
       "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const batch = $input.first().json;\nconst cfg = $('Set_Config_Provisorio').first().json;\nlet base = String(cfg.cloud_run_base || '').trim();\nwhile (base.endsWith('/')) base = base.slice(0, -1);\nconst secret = String(cfg.x_autodoc_secret || '');\nconst api = batch.batch_http;\nif (!api) throw new Error('batch_http ausente');\n\nconst detalles = [];\nfor (const r of api.results || []) {\n  if (!r.success || !r.sheets_rows || !r.sheets_rows.length) continue;\n  const row = r.sheets_rows[0];\n  const d = row.Detalle || row.detalle || '';\n  if (d) detalles.push(String(d));\n}\nconst combined = detalles.join(' | ').slice(0, 12000);\n\nlet ethics_report = { detalle_empty: true, needs_review: false, max_similarity: 0, threshold: 0, note: 'Sin detalles para comparar' };\ntry {\n  if (combined.trim()) {\n    const res = await this.helpers.httpRequest({\n      method: 'POST',\n      url: `${base}/ethics-rag`,\n      headers: {\n        'Content-Type': 'application/json',\n        'X-Autodoc-Secret': secret,\n      },\n      body: JSON.stringify({ detalle: combined }),\n      timeout: 120000,\n    });\n    ethics_report = typeof res === 'string' ? JSON.parse(res) : res;\n  }\n} catch (e) {\n  ethics_report = { needs_review: false, max_similarity: 0, ethics_error: String(e.message || e), note: 'Fallo llamada ethics-rag (se continúa el flujo)' };\n}\n\nreturn [{ json: { batch_http: api, drive_items: batch.drive_items, ticket_count: batch.ticket_count, ethics_report } }];"
-      },
-      "id": "code-ethics",
-      "name": "Code_Ethics_RAG",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [-670, 260],
-      "notesInFlow": true,
-      "notes": "POST /ethics-rag con Detalle agregado; requiere OPENAI_API_KEY en Cloud Run."
-    },
-    {
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const root = $input.first().json;\nconst api = root.batch_http;\nconst driveByIndex = {};\nfor (const d of root.drive_items || []) driveByIndex[d.index] = d;\nif (!api || !Array.isArray(api.results)) return [{ json: { Error: 'sin results', raw: root } }];\nconst out = [];\nfor (const r of api.results) {\n  const link = driveByIndex[r.index]?.drive_web_view_link || '';\n  const id = driveByIndex[r.index]?.drive_id || '';\n  if (!r.success) {\n    out.push({\n      json: {\n        Batch_Id: api.batch_id,\n        Source_File: r.filename,\n        Drive_File_Id: id,\n        Drive_Link: link,\n        Error: r.error || '',\n        Detail: r.detail || '',\n      },\n    });\n    continue;\n  }\n  for (const row of r.sheets_rows || []) {\n    out.push({\n      json: {\n        ...row,\n        Batch_Id: api.batch_id,\n        Source_File: r.filename,\n        Drive_File_Id: id,\n        Drive_Link: link,\n      },\n    });\n  }\n}\nreturn out.length ? out : [{ json: { Batch_Id: api.batch_id, Note: 'sin filas' } }];"
-      },
-      "id": "code-expand",
-      "name": "Code_Expandir_Filas_Rendiciones",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [-540, 260]
-    },
-    {
-      "parameters": {
-        "authentication": "serviceAccount",
-        "resource": "sheet",
-        "operation": "append",
-        "documentId": {
-          "__rl": true,
-          "mode": "id",
-          "value": "={{ $('Set_Config_Provisorio').first().json.google_sheet_id }}"
-        },
-        "sheetName": {
-          "__rl": true,
-          "mode": "name",
-          "value": "Rendiciones"
-        },
-        "columns": {
-          "mappingMode": "autoMapInputData",
-          "value": {},
-          "matchingColumns": [],
-          "schema": []
-        },
-        "options": {}
-      },
-      "id": "gsheet",
-      "name": "GoogleSheets_Rendiciones",
-      "type": "n8n-nodes-base.googleSheets",
-      "typeVersion": 4.5,
-      "position": [-300, 260],
-      "credentials": {
-        "googleApi": {
-          "id": "REPLACE_SHEETS_CRED",
-          "name": "Google Service Account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "resume": "webhook",
-        "options": {}
-      },
-      "id": "wait-hitl",
-      "name": "Wait_HITL_Consolidado",
-      "type": "n8n-nodes-base.wait",
-      "typeVersion": 1.1,
-      "position": [-60, 260],
-      "webhookId": "autodoc-hitl-multi"
-    },
-    {
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const waitItem = $input.first().json;\nconst b = $('Code_Ethics_RAG').first().json;\nconst api = b.batch_http;\nconst ethics = b.ethics_report || {};\nconst tasks = api.curation_tasks || [];\nlet links = '';\nfor (const t of tasks) {\n  links += '<li><a href=\"' + String(t.curation_url || '').replace(/\"/g, '') + '\">' + String(t.filename || '') + '</a></li>';\n}\nconst resumeUrl = waitItem.resumeUrl || waitItem.executionResumeUrl || '';\nconst ethLine = ethics.needs_review\n  ? '<p style=\"color:#b45309\"><strong>Ética (embeddings vs manual):</strong> Revisar — similitud máx. ' + ethics.max_similarity + '</p>'\n  : '<p><strong>Ética:</strong> Sin alerta por similitud con el manual.</p>';\nconst html = '<html><body style=\"font-family:system-ui,sans-serif;max-width:640px\"><h2>Rendiciones — aprobación de lote</h2><p><strong>Tickets:</strong> ' + b.ticket_count + '</p><p><strong>Batch ID:</strong> ' + api.batch_id + '</p><p><strong>Procesados OK:</strong> ' + (api.results || []).filter((r) => r.success).length + ' / ' + (api.results || []).length + '</p>' + ethLine + '<p><strong>Curación (validar extracción IA):</strong></p><ul>' + (links || '<li>(sin enlaces)</li>') + '</ul><p style=\"margin-top:20px\"><a href=\"' + resumeUrl + '?decision=approve\" style=\"display:inline-block;padding:10px 16px;background:#0f766e;color:#fff;border-radius:8px;text-decoration:none;margin-right:12px\">Aprobar lote</a><a href=\"' + resumeUrl + '?decision=reject\" style=\"display:inline-block;padding:10px 16px;background:#b91c1c;color:#fff;border-radius:8px;text-decoration:none\">Rechazar lote</a></p></body></html>';\nreturn [{ json: { email_html: html } }];"
-      },
-      "id": "code-hitl-email",
-      "name": "Code_Prepare_HITL_Email",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [160, 260]
-    },
-    {
-      "parameters": {
-        "resource": "message",
-        "operation": "send",
-        "sendTo": "={{ $('Set_Config_Provisorio').first().json.hitl_approver_email }}",
-        "subject": "=Rendiciones — Lote {{ $('Code_Ethics_RAG').first().json.ticket_count }} ticket(s)",
-        "emailType": "html",
-        "message": "={{ $json.email_html }}",
-        "options": {}
-      },
-      "id": "gmail-1",
-      "name": "Gmail_HITL_Consolidado",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
-      "position": [380, 260],
-      "credentials": {
-        "gmailOAuth2": {
-          "id": "REPLACE_GMAIL_CRED",
-          "name": "Gmail OAuth2"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "content": "## Sync → Curación inmediata\n- Webhook responde **curation_url** (responseMode=lastNode).\n- Set_Config_Provisorio define `cloud_run_base` y `x_autodoc_secret`.\n- Divi redirige `window.location.href = curation_url`.\n\n### Persistencia post-curación\n- El backend llama a `PERSIST_WEBHOOK_URL` (n8n) en `POST /curation/submit` para guardar en Sheets/Drive y enviar resumen.\n",
-        "height": 260,
-        "width": 420,
+        "content": "## Sync → Curación (solo lectura / extracción)\n- El webhook responde `curation_url` (último nodo).\n- **No** hay ética RAG ni escritura a Sheets aquí.\n- Tras validar en el UI, el backend puede llamar al flujo de persistencia n8n.\n",
+        "height": 220,
+        "width": 400,
         "color": 4
       },
       "id": "note-1",
