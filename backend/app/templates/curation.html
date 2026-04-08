@@ -64,6 +64,7 @@
     <section class="lg:w-[40%] flex flex-col gap-3 min-w-0">
       <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex-1 flex flex-col min-h-0">
         <h2 class="text-sm font-semibold text-slate-700 mb-3">Datos contables (por ticket)</h2>
+        <div id="extraction-warn" class="hidden mb-3 rounded-lg border border-amber-200 bg-amber-50 text-amber-950 text-xs px-3 py-2 leading-relaxed" role="alert"></div>
         <div class="overflow-y-auto flex-1 pr-1 space-y-4" id="form-root"></div>
         <div class="mt-4 flex flex-wrap gap-2 pt-3 border-t border-slate-100">
           <button type="button" id="btn-add-row" class="px-3 py-2 text-sm font-medium rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700">+ Agregar fila</button>
@@ -120,6 +121,16 @@
     function renderDoc() {
       DOCS.forEach(ensureDocRows);
       const d = getCurrentDoc();
+
+      const warn = document.getElementById('extraction-warn');
+      const note = d.extraction_note && String(d.extraction_note).trim();
+      if (note) {
+        warn.textContent = 'Extracción automática no disponible — cargá los datos a mano. Detalle: ' + note;
+        warn.classList.remove('hidden');
+      } else {
+        warn.textContent = '';
+        warn.classList.add('hidden');
+      }
 
       document.getElementById('nav-counter').textContent = `Ticket ${docIndex + 1} de ${DOCS.length}`;
       document.getElementById('doc-filename').textContent = d.filename || '';

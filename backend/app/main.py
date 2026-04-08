@@ -152,6 +152,46 @@ def _parse_drive_links(raw: Optional[str]) -> dict[int, str]:
     return {}
 
 
+def _append_pending_manual_curation(
+    pending_docs: list[dict],
+    *,
+    index: int,
+    name: str,
+    mime: str,
+    data: bytes,
+    drive_by_index: dict[int, str],
+    extraction_note: str,
+) -> None:
+    """Si falla el modelo, igual cargar el comprobante en la UI con filas vacías (edición manual)."""
+    try:
+        preview = preview_for_curation_ui(data, mime, name)
+        pending_docs.append(
+            {
+                "index": index,
+                "filename": name,
+                "mime": mime,
+                "preview_mime": "image/jpeg",
+                "preview_base64": base64.standard_b64encode(preview).decode("ascii"),
+                "original_base64": base64.standard_b64encode(data).decode("ascii"),
+                "drive_web_view_link": drive_by_index.get(index, ""),
+                "rows": [],
+                "extraction_note": (extraction_note or "")[:4000],
+            },
+        )
+        logger.info(
+            "Curación manual (fallback) index=%s archivo=%s",
+            index,
+            name,
+        )
+    except Exception:
+        logger.warning(
+            "Sin fallback de curación index=%s archivo=%s",
+            index,
+            name,
+            exc_info=True,
+        )
+
+
 def _is_multipart_file_field_name(key: str) -> bool:
     """n8n / clientes pueden usar ``images`` (Divi) o ``data[]`` / ``data`` (axios u otros)."""
     k = (key or "").strip()
@@ -527,6 +567,15 @@ async def process_batch(
                     detail=str(e),
                 ),
             )
+            _append_pending_manual_curation(
+                pending_docs,
+                index=index,
+                name=name,
+                mime=mime,
+                data=data,
+                drive_by_index=drive_by_index,
+                extraction_note=str(e),
+            )
         except RuntimeError as e:
             logger.error("Configuración u OpenAI index=%s: %s", index, e)
             return JSONResponse(
@@ -550,6 +599,15 @@ async def process_batch(
                     detail=omsg[:4000],
                 ),
             )
+            _append_pending_manual_curation(
+                pending_docs,
+                index=index,
+                name=name,
+                mime=mime,
+                data=data,
+                drive_by_index=drive_by_index,
+                extraction_note=f"OpenAI: {omsg[:2000]}",
+            )
         except Exception:
             logger.error("Error interno index=%s:\n%s", index, traceback.format_exc())
             results.append(
@@ -560,6 +618,15 @@ async def process_batch(
                     error="internal_error",
                     detail="Fallo la extracción",
                 ),
+            )
+            _append_pending_manual_curation(
+                pending_docs,
+                index=index,
+                name=name,
+                mime=mime,
+                data=data,
+                drive_by_index=drive_by_index,
+                extraction_note="Fallo interno al extraer; revisá los registros del servicio.",
             )
 
     if not pending_docs:
