@@ -5,6 +5,7 @@ from io import BytesIO
 
 from PIL import Image
 
+from app.services.media_sniff import binary_format_hint, friendly_decoder_error, trim_leading_pdf
 from app.services.pdf_pages import pdf_bytes_to_jpeg_pages
 
 logger = logging.getLogger(__name__)
@@ -35,17 +36,18 @@ def _looks_like_isobmff_heic(b: bytes) -> bool:
 
 def _decode_image_open_error_message(file_bytes: bytes, filename: str, err: Exception) -> str:
     fn = (filename or "").lower()
-    tail = str(err)[:280]
+    hint = binary_format_hint(file_bytes)
+    tail = friendly_decoder_error(err)
     if _looks_like_isobmff_heic(file_bytes) or fn.endswith((".heic", ".heif")):
         return (
-            "Archivo HEIC/HEIF (típico de iPhone). Con la imagen actual del backend (pillow-heif) debería abrirse; "
-            "si no, en Ajustes → Cámara → Formatos elegí «Más compatible» o exportá JPG. "
-            f"Detalle: {tail}"
+            "Archivo HEIC/HEIF (típico de iPhone). Con pillow-heif debería abrirse; "
+            "si no, en Cámara usá «Más compatible» o exportá JPG. "
+            f"{tail} ({hint})"
         )
     return (
-        "No se pudo abrir el archivo como imagen (¿archivo corrupto, binario mal enviado desde n8n o formato no soportado?). "
-        "Probá JPG/PNG/PDF. "
-        f"Detalle: {tail}"
+        "No se pudo decodificar como imagen. "
+        "Si subís PDF desde n8n, el binario debe ser el PDF real (no JSON ni HTML). "
+        f"{tail} Pista: {hint}"
     )
 
 MAX_EDGE = 1400
@@ -59,10 +61,6 @@ def _is_pdf(mime: str, filename: str) -> bool:
     return m == "application/pdf" or (filename or "").lower().endswith(".pdf")
 
 
-def _is_pdf_magic(b: bytes) -> bool:
-    return len(b) >= 5 and b[:5] == b"%PDF-"
-
-
 def bytes_for_openai_vision(file_bytes: bytes, mime: str, filename: str) -> tuple[bytes, str]:
     """
     Devuelve PNG y ``image/png`` re-encodados para la API Vision.
@@ -70,10 +68,14 @@ def bytes_for_openai_vision(file_bytes: bytes, mime: str, filename: str) -> tupl
     """
     if not file_bytes:
         raise ValueError("Archivo vacío")
-    # Solo rasterizar si los bytes son PDF. Las páginas ya renderizadas (JPEG) en extract_ticket
-    # siguen teniendo filename *.pdf y MIME image/jpeg: no deben pasar por pdf2image otra vez.
-    if _is_pdf_magic(file_bytes):
-        pages = pdf_bytes_to_jpeg_pages(file_bytes, dpi=200)
+    # PDF por firma al inicio, por MIME/nombre, o con bytes basura delante de %PDF-.
+    # No usar solo _is_pdf_magic: n8n a veces manda PDF como upload.bin + image/jpeg.
+    pdf_blob = trim_leading_pdf(file_bytes)
+    if pdf_blob is None and _is_pdf(mime, filename):
+        pdf_blob = file_bytes
+
+    if pdf_blob is not None and len(pdf_blob) >= 5 and pdf_blob.startswith(b"%PDF-"):
+        pages = pdf_bytes_to_jpeg_pages(pdf_blob, dpi=200)
         if not pages:
             raise ValueError("PDF sin páginas renderizables")
         im = Image.open(BytesIO(pages[0]))
@@ -100,8 +102,12 @@ def bytes_for_openai_vision(file_bytes: bytes, mime: str, filename: str) -> tupl
 
 def make_preview_jpeg_bytes(file_bytes: bytes, mime: str, filename: str) -> bytes:
     """Primera página / imagen reducida a JPEG para la UI de curación."""
-    if _is_pdf(mime, filename):
-        pages = pdf_bytes_to_jpeg_pages(file_bytes, dpi=150)
+    pdf_blob = trim_leading_pdf(file_bytes)
+    if pdf_blob is None and _is_pdf(mime, filename):
+        pdf_blob = file_bytes
+
+    if pdf_blob is not None and len(pdf_blob) >= 5 and pdf_blob.startswith(b"%PDF-"):
+        pages = pdf_bytes_to_jpeg_pages(pdf_blob, dpi=150)
         if not pages:
             raise ValueError("PDF sin páginas renderizables")
         raw = pages[0]

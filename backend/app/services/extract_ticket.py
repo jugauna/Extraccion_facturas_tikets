@@ -6,6 +6,7 @@ from typing import List, Tuple
 
 from app.schemas import AccountingRow
 from app.services.extraction import extract_accounting_rows
+from app.services.media_sniff import trim_leading_pdf
 from app.services.pdf_pages import pdf_bytes_to_jpeg_pages
 
 logger = logging.getLogger(__name__)
@@ -26,8 +27,12 @@ def extract_ticket_from_bytes(
     """
     Extrae filas contables de una imagen o de un PDF (una llamada Vision por página; se concatenan filas).
     """
-    if _is_pdf(mime, filename):
-        pages = pdf_bytes_to_jpeg_pages(data, dpi=300)
+    pdf_blob = trim_leading_pdf(data)
+    if pdf_blob is None and _is_pdf(mime, filename):
+        pdf_blob = data
+
+    if pdf_blob is not None and len(pdf_blob) >= 5 and pdf_blob.startswith(b"%PDF-"):
+        pages = pdf_bytes_to_jpeg_pages(pdf_blob, dpi=300)
         if not pages:
             raise ValueError("No se pudo renderizar ninguna página del PDF")
         stem = Path(filename or "document").stem or "document"
