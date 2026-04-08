@@ -245,16 +245,17 @@ async def ethics_rag(
 )
 async def process_batch(
     _: Annotated[None, Depends(require_autodoc_secret)],
-    images: Annotated[
-        List[UploadFile],
-        File(description="Uno o más archivos: imágenes (tickets) y/o PDFs"),
-    ],
+    # Form antes que File (requisito FastAPI / Starlette con multipart; si no, 422 al mezclar con n8n).
     user_notes: Annotated[Optional[str], Form(description="Notas opcionales del usuario sobre el lote")] = None,
     batch_id: Annotated[Optional[str], Form()] = None,
     drive_links_json: Annotated[
         Optional[str],
         Form(description="JSON array de enlaces Drive, mismo orden que images"),
     ] = None,
+    images: Annotated[
+        List[UploadFile],
+        File(description="Uno o más archivos: imágenes (tickets) y/o PDFs"),
+    ],
 ) -> ProcessBatchResponse | JSONResponse:
     if not images:
         return JSONResponse(
