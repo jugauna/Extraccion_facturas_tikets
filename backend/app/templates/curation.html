@@ -162,7 +162,7 @@
       img.alt = pb
         ? (d.filename || 'Vista previa')
         : showPdfHint
-          ? 'PDF — si no ves imagen, completá el formulario o reenviá el archivo como JPG/PNG'
+          ? 'PDF — si no ves vista previa, completá el formulario o reenviá un PDF válido'
           : 'Vista previa no disponible — revisá los datos del formulario';
       img.src = pb ? `data:${pm};base64,${pb}` : '';
       zoom = 1.0; rot = 0; applyTransform();

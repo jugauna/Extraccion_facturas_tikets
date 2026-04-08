@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.idempotency import idempotency_store
 from app.models import AccountingRow, ErrorResponse, ProcessTicketResponse
 from app.services.extract_ticket import extract_ticket_from_bytes
+from app.services.media_sniff import trim_leading_pdf
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,8 +21,8 @@ logger = logging.getLogger("autodoc")
 
 app = FastAPI(
     title="Autodoc v2",
-    description="Motor FastAPI para extracción contable (GPT-4o Vision): imágenes y PDF.",
-    version="2.0.0",
+    description="Motor FastAPI para extracción contable (GPT-4o Vision): solo PDF (firma %PDF-).",
+    version="2.1.0",
 )
 
 
@@ -69,7 +70,7 @@ async def health() -> dict[str, str]:
 )
 async def process_ticket(
     _: Annotated[None, Depends(require_autodoc_secret)],
-    file: Annotated[UploadFile, File(..., description="Imagen o PDF del comprobante")],
+    file: Annotated[UploadFile, File(..., description="PDF del comprobante (firma %PDF-)")],
     user_notes: Annotated[
         Optional[str],
         Form(description="Notas opcionales del usuario"),
@@ -115,8 +116,23 @@ async def process_ticket(
 
     mime = _mime_from_upload(file)
     warnings: list[str] = []
-    if not mime.startswith("image/") and mime != "application/pdf":
-        warnings.append(f"content-type inusual ({mime}); se intentará según extensión")
+    if mime not in ("application/pdf", "application/octet-stream") and not mime.startswith("application/"):
+        warnings.append(f"content-type inusual (se espera PDF): {mime}")
+
+    pdf_blob = trim_leading_pdf(file_bytes)
+    if pdf_blob is None and mime == "application/pdf":
+        pdf_blob = file_bytes
+    if pdf_blob is None or len(pdf_blob) < 9 or not pdf_blob.startswith(b"%PDF-"):
+        return JSONResponse(
+            status_code=400,
+            content=ErrorResponse(
+                error="pdf_required",
+                detail=(
+                    "Solo se aceptan archivos PDF (firma %PDF-). "
+                    "Exportá o escaneá el comprobante a PDF; las fotos JPG/PNG no se procesan en este flujo."
+                ),
+            ).model_dump(),
+        )
 
     try:
         rows, raw = extract_ticket_from_bytes(file_bytes, mime, file.filename or "ticket", notes)

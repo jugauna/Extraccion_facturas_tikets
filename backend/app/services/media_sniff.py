@@ -57,11 +57,12 @@ def early_reject_wrong_payload(data: bytes) -> str | None:
             t = data.decode("ascii", errors="strict").strip()
         except UnicodeDecodeError:
             t = ""
-        if t and len(t) == n and n <= 512 and t.isdigit():
+        # ID numérico (p. ej. Google Drive) aunque venga con \\r\\n: antes fallaba len(t)==n
+        if t and 4 <= len(t) <= 512 and t.isdigit():
             return (
                 "Se recibió solo un número en texto (no el archivo binario). "
-                "En n8n: usá getBinaryDataBuffer / item.binary.image en el multipart, "
-                f"no un campo del JSON. Valor recibido: «{t[:48]}»."
+                "En n8n: descargá el PDF con un nodo «Download» / getBinaryDataBuffer; "
+                f"no envíes el ID del documento como archivo. Valor: «{t[:48]}»."
             )
         if t and len(t) == n and n <= 256:
             if all(32 <= ord(c) <= 126 or c in "\r\n\t" for c in t) and not t.startswith(
@@ -83,6 +84,16 @@ def binary_format_hint(data: bytes) -> str:
     if not data:
         return "contenido vacío."
     n = len(data)
+    if 4 <= n <= 128:
+        try:
+            head = data.decode("ascii", errors="strict").strip()
+            if head.isdigit():
+                return (
+                    "parece un ID numérico en texto, no bytes de PDF. "
+                    "En n8n: el multipart debe incluir el binario del PDF (Download / getBinaryDataBuffer), no el ID."
+                )
+        except UnicodeDecodeError:
+            pass
     # Caso típico n8n: se manda un ID o número como "archivo" en vez del binario de la foto.
     if n <= 512:
         try:
@@ -111,7 +122,7 @@ def binary_format_hint(data: bytes) -> str:
     if n < 32:
         return f"muy pocos bytes ({n}); posible carga incompleta desde n8n."
     if data[:2] == b"PK":
-        return "parece un ZIP (Excel/Word/Office); subí PDF o imagen del comprobante."
+        return "parece un ZIP (Excel/Word/Office); subí el comprobante como PDF."
     head = data[: min(400, n)]
     try:
         t = head.decode("utf-8")

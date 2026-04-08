@@ -61,6 +61,15 @@ def _is_pdf(mime: str, filename: str) -> bool:
     return m == "application/pdf" or (filename or "").lower().endswith(".pdf")
 
 
+def _pdf_magic_ok(blob: bytes | None) -> bool:
+    return blob is not None and len(blob) >= 5 and blob.startswith(b"%PDF-")
+
+
+def _not_pdf_but_declared_pdf(mime: str, filename: str, pdf_blob: bytes | None) -> bool:
+    """MIME o nombre dicen PDF pero los bytes no tienen firma %PDF- (típico: ID de Drive en vez del binario)."""
+    return _is_pdf(mime, filename) and not _pdf_magic_ok(pdf_blob)
+
+
 def bytes_for_openai_vision(file_bytes: bytes, mime: str, filename: str) -> tuple[bytes, str]:
     """
     Devuelve PNG y ``image/png`` re-encodados para la API Vision.
@@ -74,11 +83,17 @@ def bytes_for_openai_vision(file_bytes: bytes, mime: str, filename: str) -> tupl
     if pdf_blob is None and _is_pdf(mime, filename):
         pdf_blob = file_bytes
 
-    if pdf_blob is not None and len(pdf_blob) >= 5 and pdf_blob.startswith(b"%PDF-"):
+    if _pdf_magic_ok(pdf_blob):
         pages = pdf_bytes_to_jpeg_pages(pdf_blob, dpi=200)
         if not pages:
             raise ValueError("PDF sin páginas renderizables")
         im = Image.open(BytesIO(pages[0]))
+    elif _not_pdf_but_declared_pdf(mime, filename, pdf_blob):
+        raise ValueError(
+            "El cuerpo no es un PDF válido (no hay firma %PDF-). "
+            "Si en n8n el nombre termina en .pdf pero el binario es un ID o texto, "
+            "usá un nodo «Download file» / getBinaryDataBuffer del archivo real, no el campo numérico del documento."
+        )
     else:
         try:
             im = Image.open(BytesIO(file_bytes))
@@ -106,11 +121,15 @@ def make_preview_jpeg_bytes(file_bytes: bytes, mime: str, filename: str) -> byte
     if pdf_blob is None and _is_pdf(mime, filename):
         pdf_blob = file_bytes
 
-    if pdf_blob is not None and len(pdf_blob) >= 5 and pdf_blob.startswith(b"%PDF-"):
+    if _pdf_magic_ok(pdf_blob):
         pages = pdf_bytes_to_jpeg_pages(pdf_blob, dpi=150)
         if not pages:
             raise ValueError("PDF sin páginas renderizables")
         raw = pages[0]
+    elif _not_pdf_but_declared_pdf(mime, filename, pdf_blob):
+        raise ValueError(
+            "PDF inválido o binario ausente (sin firma %PDF-). Revisá n8n: descargá el archivo real, no el ID."
+        )
     else:
         raw = file_bytes
 

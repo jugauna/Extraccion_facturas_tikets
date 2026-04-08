@@ -1,6 +1,6 @@
 <!--
   Autodoc v2 — Módulo Código Divi (WordPress)
-  FormData: "images" (repetido), "user_notes" y "batch_id" opcionales.
+  FormData: "images" (repetido; solo PDF), "user_notes" y "batch_id" opcionales.
 
   Si ves "Failed to fetch": a) el flujo en n8n debe estar ACTIVO (si no, el webhook /webhook/... no existe); b) CORS:
   N8N_CORS_ALLOW_ORIGIN=https://TU-SITIO-WORDPRESS.com (o * solo para pruebas). Reiniciá n8n tras cambiar .env.
@@ -10,13 +10,13 @@
 -->
 <div id="autodoc-rendiciones" class="autodoc-wrap">
   <form id="autodoc_form" class="autodoc-form">
-    <label for="ticket_files">Seleccionar comprobantes (PDF recomendado; también imágenes si el flujo lo permite)</label>
+    <label for="ticket_files">Seleccionar comprobantes (solo PDF)</label>
     <input
       type="file"
       id="ticket_files"
       name="ticket_files"
       multiple
-      accept=".pdf,application/pdf,image/jpeg,image/png,image/webp"
+      accept=".pdf,application/pdf"
       required
     />
 
@@ -81,6 +81,15 @@
     const files = input.files ? Array.from(input.files) : [];
     if (!files.length) {
       setStatus('Seleccioná al menos un archivo.', 'error');
+      return;
+    }
+    const bad = files.filter(function (f) {
+      const n = (f.name || '').toLowerCase();
+      const t = (f.type || '').split(';')[0].trim().toLowerCase();
+      return t !== 'application/pdf' && !n.endsWith('.pdf');
+    });
+    if (bad.length) {
+      setStatus('Solo se aceptan archivos PDF. Convertí o escaneá los comprobantes a PDF e intentá de nuevo.', 'error');
       return;
     }
 

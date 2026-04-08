@@ -26,7 +26,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const wh = $('Webhook_Ingest').first();\nconst body = wh.json.body || wh.json;\nconst user_notes = String(body.user_notes || body.notes || '');\nconst idempotency_key = $execution.id;\nconst bin = wh.binary?.file || wh.binary?.image || wh.binary?.data;\nif (!bin) {\n  throw new Error('Falta archivo: enviá multipart con campo \"file\" o \"image\" (imagen o PDF).');\n}\nreturn [{ json: { idempotency_key, user_notes, hitl_status: 'PENDING' }, binary: { file: bin } }];"
+        "jsCode": "const wh = $('Webhook_Ingest').first();\nconst body = wh.json.body || wh.json;\nconst user_notes = String(body.user_notes || body.notes || '');\nconst idempotency_key = $execution.id;\nconst bin = wh.binary?.file || wh.binary?.image || wh.binary?.data;\nif (!bin) {\n  throw new Error('Falta archivo: enviá multipart con campo \"file\" o \"image\" (solo PDF).');\n}\nreturn [{ json: { idempotency_key, user_notes, hitl_status: 'PENDING' }, binary: { file: bin } }];"
       },
       "id": "code-attach-binary",
       "name": "Code_Reattach_File",

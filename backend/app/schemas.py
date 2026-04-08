@@ -106,7 +106,7 @@ class AccountingRow(BaseModel):
 
 
 class TicketProcessResult(BaseModel):
-    """Resultado por cada imagen del lote."""
+    """Resultado por cada archivo del lote (PDF)."""
 
     filename: str = ""
     index: int = Field(default=0, ge=0)

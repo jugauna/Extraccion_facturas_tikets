@@ -53,8 +53,8 @@ logger = logging.getLogger("autodoc.batch")
 
 app = FastAPI(
     title="Autodoc v2 — Multi-ticket",
-    description="Procesamiento por lote de imágenes y PDFs (GPT-4o Vision) para Rendiciones.",
-    version="2.2.0",
+    description="Procesamiento por lote de comprobantes en PDF (GPT-4o Vision). Solo se aceptan archivos con firma PDF.",
+    version="2.3.0",
 )
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -550,7 +550,6 @@ async def process_batch(
     bid = (batch_id or "").strip() or str(uuid.uuid4())
     notes = (user_notes or "").strip()
     drive_by_index = _parse_drive_links(drive_links_json)
-    settings_batch = get_settings()
     logger.info("process-batch batch_id=%s files=%s user_notes_len=%s", bid, len(images), len(notes))
 
     results: list[TicketProcessResult] = []
@@ -586,8 +585,10 @@ async def process_batch(
             continue
 
         mime = _mime_from_upload(upload)
-        if not mime.startswith("image/") and mime != "application/pdf":
-            logger.warning("Tipo inusual index=%s mime=%s", index, mime)
+        if mime not in ("application/pdf", "application/octet-stream") and not mime.startswith(
+            "application/",
+        ):
+            logger.warning("Tipo MIME inusual (se espera PDF) index=%s mime=%s", index, mime)
 
         rej = early_reject_wrong_payload(data)
         if rej:
@@ -602,24 +603,23 @@ async def process_batch(
             )
             continue
 
-        if settings_batch.process_batch_pdf_only:
-            pdf_blob = trim_leading_pdf(data)
-            if pdf_blob is None and mime == "application/pdf":
-                pdf_blob = data
-            if pdf_blob is None or len(pdf_blob) < 9 or not pdf_blob.startswith(b"%PDF-"):
-                results.append(
-                    TicketProcessResult(
-                        filename=name,
-                        index=index,
-                        success=False,
-                        error="pdf_only",
-                        detail=(
-                            "Este servicio está en modo solo-PDF (PROCESS_BATCH_PDF_ONLY). "
-                            "Subí un PDF o desactivá esa variable en Cloud Run para aceptar JPG/PNG."
-                        ),
+        pdf_blob = trim_leading_pdf(data)
+        if pdf_blob is None and mime == "application/pdf":
+            pdf_blob = data
+        if pdf_blob is None or len(pdf_blob) < 9 or not pdf_blob.startswith(b"%PDF-"):
+            results.append(
+                TicketProcessResult(
+                    filename=name,
+                    index=index,
+                    success=False,
+                    error="pdf_required",
+                    detail=(
+                        "Solo se aceptan archivos PDF (firma %PDF-). "
+                        "Exportá o escaneá el comprobante a PDF; las fotos JPG/PNG no se procesan en este flujo."
                     ),
-                )
-                continue
+                ),
+            )
+            continue
 
         try:
             rows, _raw = extract_ticket_from_bytes(data, mime, name, notes)

@@ -49,7 +49,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const wb = $('Webhook_Multipart').first();\nconst body = wb.json.body || wb.json;\nconst full = $('Set_Config_Provisorio').first().json || {};\nconst skip = new Set(['headers', 'params', 'query', 'body', 'webhookUrl', 'executionMode']);\nconst cfg = {};\nfor (const [k, v] of Object.entries(full)) {\n  if (!skip.has(k)) cfg[k] = v;\n}\nconst b = wb.binary || {};\nconst keys = Object.keys(b);\nif (!keys.length) {\n  throw new Error('No hay archivos binarios. El nodo Set no reenvía binario: se lee de Webhook_Multipart. Enviá multipart con el campo \"images\" (uno o más) o ejecutá desde el webhook con archivo.');\n}\nconst user_notes = body.user_notes || body.notes || '';\nconst batch_id = body.batch_id || $execution.id;\nreturn keys.map((key, index) => ({\n  json: {\n    ...cfg,\n    batch_id,\n    user_notes: String(user_notes),\n    filename: b[key].fileName || `ticket_${index}.jpg`,\n    binaryKey: key,\n  },\n  binary: { image: b[key] },\n}));"
+        "jsCode": "const wb = $('Webhook_Multipart').first();\nconst body = wb.json.body || wb.json;\nconst full = $('Set_Config_Provisorio').first().json || {};\nconst skip = new Set(['headers', 'params', 'query', 'body', 'webhookUrl', 'executionMode']);\nconst cfg = {};\nfor (const [k, v] of Object.entries(full)) {\n  if (!skip.has(k)) cfg[k] = v;\n}\nconst b = wb.binary || {};\nconst keys = Object.keys(b);\nif (!keys.length) {\n  throw new Error('No hay archivos binarios. El nodo Set no reenvía binario: se lee de Webhook_Multipart. Enviá multipart con el campo \"images\" (uno o más) o ejecutá desde el webhook con archivo.');\n}\nconst user_notes = body.user_notes || body.notes || '';\nconst batch_id = body.batch_id || $execution.id;\nreturn keys.map((key, index) => ({\n  json: {\n    ...cfg,\n    batch_id,\n    user_notes: String(user_notes),\n    filename: b[key].fileName || `ticket_${index}.pdf`,\n    binaryKey: key,\n  },\n  binary: { image: b[key] },\n}));"
       },
       "id": "code-split-items",
       "name": "SplitOut_UnItemPorImagen",
@@ -70,11 +70,11 @@
       "typeVersion": 2,
       "position": [-800, 260],
       "notesInFlow": true,
-      "notes": "El Buffer del multipart debe ser el archivo real (PDF o imagen) desde getBinaryDataBuffer / binary.data. Si enviás un número u otro campo JSON como archivo, Cloud Run rechaza con invalid_payload. PDF recomendado; opción PROCESS_BATCH_PDF_ONLY en Cloud Run."
+      "notes": "El Buffer del multipart debe ser el PDF real (bytes con firma %PDF-) desde getBinaryDataBuffer / binary.data. Si enviás un número u otro campo JSON como archivo, Cloud Run rechaza con invalid_payload. No se aceptan JPG/PNG en /process-batch."
     },
     {
       "parameters": {
-        "content": "## Sync → Curación\n- Webhook responde `curation_url`. Tras **Confirmar** en la UI, Cloud Run llama a `PERSIST_WEBHOOK_URL` (flujo **Persistencia**: Drive + hoja Rendiciones + e-mail al Jefe de Contable).\n",
+        "content": "## Sync → Curación\n- Entrada: **solo PDF** por archivo.\n- Webhook responde `curation_url`. Tras **Confirmar** en la UI, Cloud Run llama a `PERSIST_WEBHOOK_URL` (flujo **Persistencia**: Drive + hoja Rendiciones + e-mail al Jefe de Contable).\n",
         "height": 220,
         "width": 400,
         "color": 4

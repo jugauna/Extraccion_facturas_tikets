@@ -25,55 +25,54 @@ def extract_ticket_from_bytes(
     user_notes: str,
 ) -> Tuple[List[AccountingRow], str]:
     """
-    Extrae filas contables de una imagen o de un PDF (una llamada Vision por página; se concatenan filas).
+    Extrae filas contables de un PDF (Vision por página rasterizada; se concatenan filas).
     """
     pdf_blob = trim_leading_pdf(data)
     if pdf_blob is None and _is_pdf(mime, filename):
         pdf_blob = data
 
-    if pdf_blob is not None and len(pdf_blob) >= 5 and pdf_blob.startswith(b"%PDF-"):
-        pages = pdf_bytes_to_jpeg_pages(pdf_blob, dpi=300)
-        if not pages:
-            raise ValueError("No se pudo renderizar ninguna página del PDF")
-        stem = Path(filename or "document").stem or "document"
-        all_rows: List[AccountingRow] = []
-        last_raw = ""
-        errors: list[str] = []
-        any_page_ok = False
-        for i, jpeg in enumerate(pages):
-            page_filename = f"{stem}_p{i + 1}.jpg"
-            try:
-                rows, last_raw = extract_accounting_rows(
-                    jpeg, "image/jpeg", user_notes, page_filename
-                )
-                any_page_ok = True
-                logger.info(
-                    "PDF página %s: %s fila(s) extraída(s)",
-                    i + 1,
-                    len(rows),
-                )
-                all_rows.extend(rows)
-            except RuntimeError:
-                raise
-            except Exception as e:
-                msg = str(e)[:500]
-                logger.warning("PDF página %s falló (%s): %s", i + 1, page_filename, msg)
-                errors.append(f"pág.{i + 1}: {msg}")
-        if not any_page_ok:
-            joined = "; ".join(errors[:5])
-            if len(errors) > 5:
-                joined += f" … (+{len(errors) - 5})"
-            raise ValueError(joined or "Todas las páginas del PDF fallaron al extraer")
-        if errors:
-            logger.warning(
-                "PDF %s: extracción parcial (%s páginas OK, %s con error)",
-                filename,
-                len(pages) - len(errors),
-                len(errors),
+    if pdf_blob is None or len(pdf_blob) < 9 or not pdf_blob.startswith(b"%PDF-"):
+        raise ValueError(
+            "Se requiere un PDF válido (firma %PDF-). Convertí el comprobante a PDF e intentá de nuevo."
+        )
+
+    pages = pdf_bytes_to_jpeg_pages(pdf_blob, dpi=300)
+    if not pages:
+        raise ValueError("No se pudo renderizar ninguna página del PDF")
+    stem = Path(filename or "document").stem or "document"
+    all_rows: List[AccountingRow] = []
+    last_raw = ""
+    errors: list[str] = []
+    any_page_ok = False
+    for i, jpeg in enumerate(pages):
+        page_filename = f"{stem}_p{i + 1}.jpg"
+        try:
+            rows, last_raw = extract_accounting_rows(
+                jpeg, "image/jpeg", user_notes, page_filename
             )
-        return all_rows, last_raw
-
-    if not (mime or "").lower().startswith("image/"):
-        logger.warning("Tipo MIME %s no es image/*; se intenta extracción como imagen", mime)
-
-    return extract_accounting_rows(data, mime, user_notes, filename)
+            any_page_ok = True
+            logger.info(
+                "PDF página %s: %s fila(s) extraída(s)",
+                i + 1,
+                len(rows),
+            )
+            all_rows.extend(rows)
+        except RuntimeError:
+            raise
+        except Exception as e:
+            msg = str(e)[:500]
+            logger.warning("PDF página %s falló (%s): %s", i + 1, page_filename, msg)
+            errors.append(f"pág.{i + 1}: {msg}")
+    if not any_page_ok:
+        joined = "; ".join(errors[:5])
+        if len(errors) > 5:
+            joined += f" … (+{len(errors) - 5})"
+        raise ValueError(joined or "Todas las páginas del PDF fallaron al extraer")
+    if errors:
+        logger.warning(
+            "PDF %s: extracción parcial (%s páginas OK, %s con error)",
+            filename,
+            len(pages) - len(errors),
+            len(errors),
+        )
+    return all_rows, last_raw
