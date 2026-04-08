@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import logging
 import secrets
 import traceback
 import urllib.request
 import uuid
+from io import BytesIO
 from pathlib import Path
 from typing import Annotated, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, status
+from starlette.datastructures import Headers
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -171,6 +174,69 @@ def _upload_files_from_form(form) -> list:
             continue
         out.append(value)
     return out
+
+
+def _upload_files_from_n8n_wrapped_strings(form) -> list:
+    """
+    n8n ``helpers.httpRequest`` a veces reenvuelve el multipart: no hay UploadFile, solo
+    ``type`` y uno o más ``data[]`` con cadenas (p. ej. base64). Reconstruye un único archivo.
+    """
+    chunks: list[bytes] = []
+    for key, value in form.multi_items():
+        if key != "data[]":
+            continue
+        if not isinstance(value, str) or not value.strip():
+            continue
+        s = value.strip()
+        if s.startswith("data:") and ";base64," in s:
+            s = s.split(";base64,", 1)[1]
+        raw: bytes
+        try:
+            raw = base64.b64decode(s, validate=False)
+        except (binascii.Error, ValueError):
+            raw = s.encode("latin-1")
+        if raw:
+            chunks.append(raw)
+
+    if not chunks:
+        return []
+
+    data = b"".join(chunks)
+    if len(data) < 4:
+        return []
+
+    t_raw = form.get("type")
+    filename = "upload.bin"
+    mime = "application/octet-stream"
+
+    if data.startswith(b"%PDF"):
+        filename, mime = "upload.pdf", "application/pdf"
+    elif data.startswith(b"\x89PNG\r\n\x1a\n"):
+        filename, mime = "upload.png", "image/png"
+    elif data[:2] == b"\xff\xd8":
+        filename, mime = "upload.jpg", "image/jpeg"
+
+    if isinstance(t_raw, str) and "/" in t_raw:
+        hint = t_raw.split(";")[0].strip().lower()
+        if hint in ("application/pdf", "image/jpeg", "image/jpg", "image/png", "image/webp"):
+            mime = hint
+            if "pdf" in mime:
+                filename = "upload.pdf"
+            elif "png" in mime:
+                filename = "upload.png"
+            elif "jpeg" in mime or "jpg" in mime or "webp" in mime:
+                filename = "upload.jpg" if "webp" not in mime else "upload.webp"
+
+    stream = BytesIO(data)
+    headers = Headers({"content-type": mime})
+    uf = UploadFile(file=stream, filename=filename, headers=headers)
+    logger.info(
+        "process-batch fallback n8n data[]: partes=%s tamaño=%s nombre=%s",
+        len(chunks),
+        len(data),
+        filename,
+    )
+    return [uf]
 
 
 def _curation_public_url(path_with_query: str) -> str:
@@ -356,6 +422,8 @@ async def process_batch(
         drive_links_json = str(drive_links_json)
 
     images = _upload_files_from_form(form)
+    if not images:
+        images = _upload_files_from_n8n_wrapped_strings(form)
 
     if not images:
         keys = sorted({k for k, _ in form.multi_items()})
