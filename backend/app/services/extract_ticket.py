@@ -32,7 +32,7 @@ def extract_ticket_from_bytes(
         all_rows: List[AccountingRow] = []
         last_raw = ""
         for i, jpeg in enumerate(pages):
-            rows, last_raw = extract_accounting_rows(jpeg, "image/jpeg", user_notes)
+            rows, last_raw = extract_accounting_rows(jpeg, "image/jpeg", user_notes, filename)
             logger.info("PDF página %s: %s fila(s) extraída(s)", i + 1, len(rows))
             all_rows.extend(rows)
         return all_rows, last_raw
@@ -40,4 +40,4 @@ def extract_ticket_from_bytes(
     if not (mime or "").lower().startswith("image/"):
         logger.warning("Tipo MIME %s no es image/*; se intenta extracción como imagen", mime)
 
-    return extract_accounting_rows(data, mime, user_notes)
+    return extract_accounting_rows(data, mime, user_notes, filename)

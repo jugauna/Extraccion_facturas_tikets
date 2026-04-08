@@ -1,15 +1,31 @@
 from __future__ import annotations
 
-import base64
 import json
 import logging
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache
+def _gcs_client():
+    from google.cloud import storage
+
+    return storage.Client()
+
+
+def _pending_gcs_bucket() -> str:
+    return (get_settings().curation_pending_gcs_bucket or "").strip()
+
+
+def _pending_gcs_blob_path(task_id: str) -> str:
+    p = (get_settings().curation_pending_gcs_prefix or "curation_pending").strip().strip("/")
+    return f"{p}/{task_id}.json" if p else f"{task_id}.json"
 
 
 def _gold_dir() -> Path:
@@ -49,12 +65,30 @@ def save_pending_batch(
         "docs": docs,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    path = _pending_dir() / f"{task_id}.json"
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info("Curation pending (batch) guardado task_id=%s docs=%s", task_id, len(docs))
+    raw = json.dumps(payload, ensure_ascii=False, indent=2)
+    bucket_name = _pending_gcs_bucket()
+    if bucket_name:
+        blob = _gcs_client().bucket(bucket_name).blob(_pending_gcs_blob_path(task_id))
+        blob.upload_from_string(raw, content_type="application/json; charset=utf-8")
+        logger.info("Curation pending GCS task_id=%s docs=%s bucket=%s", task_id, len(docs), bucket_name)
+    else:
+        path = _pending_dir() / f"{task_id}.json"
+        path.write_text(raw, encoding="utf-8")
+        logger.info("Curation pending (local) task_id=%s docs=%s", task_id, len(docs))
 
 
 def load_pending(task_id: str) -> dict[str, Any] | None:
+    bucket_name = _pending_gcs_bucket()
+    if bucket_name:
+        blob = _gcs_client().bucket(bucket_name).blob(_pending_gcs_blob_path(task_id))
+        if not blob.exists():
+            return None
+        try:
+            return json.loads(blob.download_as_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            logger.exception("pending GCS corrupto %s", task_id)
+            return None
+
     path = _pending_dir() / f"{task_id}.json"
     if not path.is_file():
         return None
@@ -66,6 +100,12 @@ def load_pending(task_id: str) -> dict[str, Any] | None:
 
 
 def delete_pending(task_id: str) -> None:
+    bucket_name = _pending_gcs_bucket()
+    if bucket_name:
+        blob = _gcs_client().bucket(bucket_name).blob(_pending_gcs_blob_path(task_id))
+        if blob.exists():
+            blob.delete()
+        return
     path = _pending_dir() / f"{task_id}.json"
     if path.is_file():
         path.unlink()

@@ -10,6 +10,7 @@ from openai import OpenAI
 
 from app.config import get_settings
 from app.schemas import AccountingRow
+from app.services.document_preview import bytes_for_openai_vision
 from app.services.few_shot import build_few_shot_addon
 
 logger = logging.getLogger(__name__)
@@ -43,29 +44,34 @@ def _vision_messages(image_bytes: bytes, mime: str, user_notes: str) -> list[dic
             "role": "user",
             "content": [
                 {"type": "text", "text": user_text},
-                {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}},
+                {"type": "image_url", "image_url": {"url": data_url, "detail": "auto"}},
             ],
         }
     ]
 
 
-def extract_accounting_rows(image_bytes: bytes, mime: str, user_notes: str) -> Tuple[List[AccountingRow], str]:
+def extract_accounting_rows(
+    image_bytes: bytes, mime: str, user_notes: str, filename: str = ""
+) -> Tuple[List[AccountingRow], str]:
     settings = get_settings()
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY no configurada")
 
+    vision_bytes, vision_mime = bytes_for_openai_vision(image_bytes, mime, filename)
     system_prompt = _load_system_prompt() + build_few_shot_addon()
     client = OpenAI(api_key=settings.openai_api_key)
     messages = [
         {"role": "system", "content": system_prompt},
-        *_vision_messages(image_bytes, mime, user_notes),
+        *_vision_messages(vision_bytes, vision_mime, user_notes),
     ]
 
     logger.info(
-        "OpenAI vision model=%s bytes=%s mime=%s user_notes_len=%s",
+        "OpenAI vision model=%s bytes_in=%s bytes_out=%s mime=%s vision_mime=%s user_notes_len=%s",
         settings.openai_model_vision,
         len(image_bytes),
+        len(vision_bytes),
         mime,
+        vision_mime,
         len(user_notes or ""),
     )
 

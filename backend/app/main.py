@@ -259,7 +259,13 @@ async def curation_page(request: Request, task_id: str, t: str = "", i: int = 0)
 
     docs = pending.get("docs")
     if not isinstance(docs, list) or not docs:
-        raise HTTPException(status_code=404, detail="Sin documentos para curación")
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Sin documentos para curación: la sesión no tiene ítems curables (extracciones fallidas o lote viejo). "
+                "Si Cloud Run tiene varias instancias, definí CURATION_PENDING_GCS_BUCKET y volvé a procesar el lote."
+            ),
+        )
     idx = max(0, min(int(i or 0), len(docs) - 1))
 
     return templates.TemplateResponse(
@@ -532,6 +538,21 @@ async def process_batch(
                 ),
             )
 
+    if not pending_docs:
+        logger.warning(
+            "process-batch: ningún documento para curación (extracciones fallidas o datos vacíos). batch_id=%s",
+            bid,
+        )
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "no_curation_docs",
+                "detail": "No se pudo preparar ningún documento para la pantalla de curación. Revisá results[].",
+                "batch_id": bid,
+                "results": [r.model_dump() for r in results],
+            },
+        )
+
     # Crear UNA sesión batch de curación.
     tid = str(uuid.uuid4())
     tok = secrets.token_urlsafe(28)
@@ -540,7 +561,7 @@ async def process_batch(
         submission_token=tok,
         batch_id=bid,
         user_notes=notes,
-        docs=pending_docs if pending_docs else [],
+        docs=pending_docs,
     )
     path_q = f"/curation/{tid}?t={tok}&i=0"
 
