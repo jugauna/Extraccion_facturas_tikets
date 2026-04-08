@@ -147,11 +147,23 @@ def _parse_drive_links(raw: Optional[str]) -> dict[int, str]:
     return {}
 
 
+def _is_multipart_file_field_name(key: str) -> bool:
+    """n8n / clientes pueden usar ``images`` (Divi) o ``data[]`` / ``data`` (axios u otros)."""
+    k = (key or "").strip()
+    if k in ("images", "image", "file", "files", "data", "data[]"):
+        return True
+    if len(k) > 2 and k.startswith("data[") and k.endswith("]"):
+        return True
+    if len(k) > 2 and k.startswith("files[") and k.endswith("]"):
+        return True
+    return False
+
+
 def _upload_files_from_form(form) -> list:
-    """Campos ``images`` del multipart. Sin isinstance(UploadFile): subclases distintas dejaban la lista vacía."""
+    """Partes de archivo del multipart (cualquier nombre de campo habitual)."""
     out: list = []
     for key, value in form.multi_items():
-        if key != "images":
+        if not _is_multipart_file_field_name(key):
             continue
         if isinstance(value, str):
             continue
@@ -346,8 +358,11 @@ async def process_batch(
     images = _upload_files_from_form(form)
 
     if not images:
-        keys = [k for k, _ in form.multi_items()]
-        logger.warning("process-batch sin archivos en 'images'; keys=%s", keys)
+        keys = sorted({k for k, _ in form.multi_items()})
+        logger.warning(
+            "process-batch sin archivos reconocidos (images/data[]/file…); keys=%s",
+            keys,
+        )
         return JSONResponse(
             status_code=400,
             content=ErrorResponse(error="validation_error", detail="Enviá al menos un archivo").model_dump(),
