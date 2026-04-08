@@ -4,6 +4,7 @@ import base64
 import binascii
 import json
 import logging
+import os
 import secrets
 import traceback
 import urllib.request
@@ -249,7 +250,12 @@ def _curation_public_url(path_with_query: str) -> str:
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "autodoc-v2-batch"}
+    # Cloud Run define K_REVISION (nombre de la revisión desplegada).
+    rev = (os.environ.get("K_REVISION") or "").strip()
+    out: dict[str, str] = {"status": "ok", "service": "autodoc-v2-batch"}
+    if rev:
+        out["k_revision"] = rev
+    return out
 
 
 @app.get("/curation/{task_id}", response_class=HTMLResponse)
